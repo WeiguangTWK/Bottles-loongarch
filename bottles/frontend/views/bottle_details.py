@@ -22,7 +22,7 @@ from datetime import datetime
 from gettext import gettext as _
 from typing import Dict, List, Optional, Tuple
 
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Xdp
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from bottles.backend.managers.backup import BackupManager
 from bottles.backend.models.config import BottleConfig
@@ -820,20 +820,19 @@ class BottleView(Adw.PreferencesPage):
             dialog.connect("response", execute)
             dialog.show()
 
-        if Xdp.Portal.running_under_sandbox():
-            if self.window.settings.get_boolean("show-sandbox-warning"):
-                dialog = Adw.MessageDialog.new(
-                    self.window,
-                    _("Be Aware of Sandbox"),
-                    _(
-                        "Bottles is running in a sandbox, a restricted permission environment needed to keep you safe. If the program won't run, consider moving inside the bottle (3 dots icon on the top), then launch from there."
-                    ),
-                )
-                dialog.add_response("dismiss", _("_Dismiss"))
-                dialog.connect("response", show_chooser)
-                dialog.present()
-            else:
-                show_chooser()
+        if self.window.settings.get_boolean("show-sandbox-warning"):
+            dialog = Adw.MessageDialog.new(
+                self.window,
+                _("Be Aware of Sandbox"),
+                _(
+                    "Bottles is running in a sandbox, a restricted permission environment needed to keep you safe. If the program won't run, consider moving inside the bottle (3 dots icon on the top), then launch from there."
+                ),
+            )
+            dialog.add_response("dismiss", _("_Dismiss"))
+            dialog.connect("response", show_chooser)
+            dialog.present()
+        else:
+            show_chooser()
 
     def __backup(self, widget, backup_type):
         """

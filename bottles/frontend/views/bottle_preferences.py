@@ -20,7 +20,7 @@ import os
 import re
 from gettext import gettext as _
 
-from gi.repository import Adw, Gdk, Gtk, Xdp
+from gi.repository import Adw, Gdk, Gtk
 
 from bottles.backend.globals import (
     gamemode_available,
@@ -148,7 +148,7 @@ class PreferencesView(Adw.PreferencesPage):
         self.queue = details.queue
         self.details = details
 
-        if not gamemode_available or not Xdp.Portal.running_under_sandbox():
+        if not gamemode_available:
             return
 
         _not_available = _("This feature is unavailable on your system.")
