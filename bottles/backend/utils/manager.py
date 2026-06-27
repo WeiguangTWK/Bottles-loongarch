@@ -17,12 +17,12 @@
 import os
 import shlex
 import shutil
-from datetime import datetime
 from gettext import gettext as _
-from glob import glob
 from typing import Optional
 
 import icoextract  # type: ignore [import-untyped]
+
+from bottles.backend.params import APP_ID
 
 from bottles.backend.globals import Paths
 from bottles.backend.logger import Logger
@@ -31,6 +31,10 @@ from bottles.backend.models.result import Result
 from bottles.backend.state import SignalManager, Signals
 from bottles.backend.utils.generic import get_mime
 from bottles.backend.utils.imagemagick import ImageMagickUtils
+
+from gi.repository import GLib, Gio, Xdp
+
+portal = Xdp.Portal()
 
 logging = Logger()
 
@@ -90,6 +94,71 @@ class ManagerUtils:
             return config.Path
 
         return os.path.join(Paths.bottles, config.Path)
+
+    @staticmethod
+    def resolve_portal_path(path: str) -> str:
+        """
+        Resolve a document portal path (/run/user/<uid>/doc/<id>/...) to its real
+        host path through the Documents portal. These paths are transient: the
+        document id changes between sessions, so storing one (e.g. a program
+        shortcut on a read-only filesystem) breaks the entry on the next launch.
+        Returns the original path unchanged on any failure.
+        """
+        if not path or "/run/user/" not in path or "/doc/" not in path:
+            return path
+
+        def _to_str(value) -> str:
+            if isinstance(value, bytes):
+                raw = value
+            elif isinstance(value, (list, tuple)):
+                raw = bytes(value)
+            else:
+                return str(value)
+            return raw.rstrip(b"\x00").decode("utf-8", "replace")
+
+        try:
+            documents = "org.freedesktop.portal.Documents"
+            proxy = Gio.DBusProxy.new_sync(
+                Gio.bus_get_sync(Gio.BusType.SESSION, None),
+                Gio.DBusProxyFlags.DO_NOT_LOAD_PROPERTIES
+                | Gio.DBusProxyFlags.DO_NOT_CONNECT_SIGNALS,
+                None,
+                documents,
+                "/org/freedesktop/portal/documents",
+                documents,
+                None,
+            )
+
+            mount = _to_str(
+                proxy.call_sync(
+                    "GetMountPoint", None, Gio.DBusCallFlags.NONE, -1, None
+                ).unpack()[0]
+            )
+            if not mount or not path.startswith(mount + "/"):
+                return path
+
+            doc_id, _, remainder = path[len(mount) + 1 :].partition("/")
+
+            hosts = proxy.call_sync(
+                "GetHostPaths",
+                GLib.Variant("(as)", ([doc_id],)),
+                Gio.DBusCallFlags.NONE,
+                -1,
+                None,
+            ).unpack()[0]
+            if doc_id not in hosts:
+                return path
+
+            host = _to_str(hosts[doc_id])
+            if remainder and os.path.basename(host) != remainder.rstrip("/"):
+                resolved = os.path.join(host, remainder)
+            else:
+                resolved = host
+
+            return resolved if os.path.exists(resolved) else path
+        except Exception as e:
+            logging.warning(f"Could not resolve document portal path: {e}")
+            return path
 
     @staticmethod
     def get_runner_path(runner: str) -> str:
@@ -202,7 +271,9 @@ class ManagerUtils:
                 os.remove(ico_dest)
 
             ico.export_icon(ico_dest_temp)
-            if get_mime(ico_dest_temp) == "image/vnd.microsoft.icon":
+            # Some ICO files are incorrectly identified as TARGA
+            # See https://bugs.astron.com/view.php?id=723
+            if get_mime(ico_dest_temp) in ["image/vnd.microsoft.icon", "image/x-tga"]:
                 if not ico_dest_temp.endswith(".ico"):
                     shutil.move(ico_dest_temp, f"{ico_dest_temp}.ico")
                     ico_dest_temp = f"{ico_dest_temp}.ico"
@@ -223,21 +294,8 @@ class ManagerUtils:
         program: dict,
         skip_icon: bool = False,
         custom_icon: str = "",
-        use_xdp: bool = False,
-    ) -> bool:
-        if not use_xdp:
-            try:
-                os.makedirs(Paths.applications, exist_ok=True)
-            except OSError:
-                return False
-
-        cmd_legacy = "bottles"
-        cmd_cli = "bottles-cli"
+    ):
         icon = "com.usebottles.bottles-program"
-
-        if "FLATPAK_ID" in os.environ:
-            cmd_legacy = "flatpak run com.usebottles.bottles"
-            cmd_cli = "flatpak run --command=bottles-cli com.usebottles.bottles"
 
         if not skip_icon and not custom_icon:
             icon = ManagerUtils.extract_icon(
@@ -246,78 +304,123 @@ class ManagerUtils:
         elif custom_icon:
             icon = custom_icon
 
-        if not use_xdp:
-            file_name_template = "%s/%s--%s--%s.desktop"
-            existing_files = glob(
-                file_name_template
-                % (Paths.applications, config.Name, program.get("name"), "*")
+        def create_manual_fallback(icon_path, exec_cmd):
+            """Create desktop entry manually when portal is unavailable."""
+            safe_name = "".join(
+                [c for c in program.get("name") if c.isalnum() or c in ("-", "_")]
             )
-            desktop_file = file_name_template % (
-                Paths.applications,
-                config.Name,
-                program.get("name"),
-                datetime.now().timestamp(),
+            safe_bottle = "".join(
+                [c for c in config.get("Name") if c.isalnum() or c in ("-", "_")]
+            )
+            filename = f"bottles-{safe_bottle}-{safe_name}.desktop"
+            content = (
+                f"[Desktop Entry]\n"
+                f"Exec={exec_cmd}\n"
+                f"Type=Application\n"
+                f"Terminal=false\n"
+                f"Categories=Game;\n"
+                f"Comment=Launch {program.get('name')} using Bottles.\n"
+                f"StartupWMClass={program.get('executable').lower()}\n"
+                f"Name={program.get('name')}\n"
+                f"Icon={icon_path}\n"
             )
 
-            if existing_files:
-                for file in existing_files:
-                    os.remove(file)
+            # Write to application menu
+            apps_dir = os.path.expanduser("~/.local/share/applications")
+            os.makedirs(apps_dir, exist_ok=True)
+            apps_path = os.path.join(apps_dir, filename)
+            try:
+                with open(apps_path, "w") as f:
+                    f.write(content)
+                logging.info(f"Desktop entry created at {apps_path}")
+            except Exception as e:
+                logging.error(f"Failed to write desktop entry to applications: {e}")
 
-            # [Bug-]issue #4247 (single- to double-quotes in Desktop Entry spec -> "The Exec key"):
-            with open(desktop_file, "w") as f:
-                f.write("[Desktop Entry]\n")
-                f.write(f"Name={program.get('name')}\n")
-                f.write(
-                    f"Exec={cmd_cli} run -p \"{program.get('name')}\" -b \"{config.get('Name')}\" -- %u\n"
+            # Write to desktop surface
+            desktop_dir = GLib.get_user_special_dir(
+                GLib.UserDirectory.DIRECTORY_DESKTOP
+            )
+            if desktop_dir:
+                desktop_path = os.path.join(desktop_dir, filename)
+                try:
+                    with open(desktop_path, "w") as f:
+                        f.write(content)
+                    # Make executable so KDE/GNOME will run it
+                    os.chmod(desktop_path, 0o755)
+                    logging.info(f"Desktop shortcut created at {desktop_path}")
+                except Exception as e:
+                    logging.error(f"Failed to write desktop shortcut: {e}")
+
+            SignalManager.send(Signals.DesktopEntryCreated)
+
+        def prepare_install_cb(self, result):
+            exec_cmd = "bottles-cli run -p {} -b {} -- %u".format(
+                shlex.quote(program.get("name")), shlex.quote(config.get("Name"))
+            )
+
+            # Handle portal preparation failure (e.g., KDE's broken implementation)
+            try:
+                ret = portal.dynamic_launcher_prepare_install_finish(result)
+                if ret is None:
+                    raise GLib.Error("Portal request was rejected or cancelled")
+            except GLib.Error as e:
+                logging.warning(
+                    f"Dynamic Launcher portal preparation failed: {e}. "
+                    "Falling back to manual creation."
                 )
-                f.write("Type=Application\n")
-                f.write("Terminal=false\n")
-                f.write("Categories=Application;\n")
-                f.write(f"Icon={icon}\n")
-                f.write(f"Comment=Launch {program.get('name')} using Bottles.\n")
-                f.write(f"StartupWMClass={program.get('name')}\n")
-                # Actions
-                f.write("Actions=Configure;\n")
-                f.write("[Desktop Action Configure]\n")
-                f.write("Name=Configure in Bottles\n")
-                f.write(f"Exec={cmd_legacy} -b \"{config.get('Name')}\"\n")
+                create_manual_fallback(icon, exec_cmd)
+                return
 
-            return True
-        '''
-        WIP: the following code is not working yet, it raises an error:
-             GDBus.Error:org.freedesktop.DBus.Error.UnknownMethod
-        import uuid
-        from gi.repository import Gio, Xdp
+            launcher_id = f"{config.get('Name')}.{program.get('name')}"
+            sum_type = GLib.ChecksumType.SHA1
+            try:
+                portal.dynamic_launcher_install(
+                    ret["token"],
+                    "{}.App_{}.desktop".format(
+                        APP_ID,
+                        GLib.compute_checksum_for_string(sum_type, launcher_id, -1),
+                    ),
+                    """[Desktop Entry]
+                    Exec={}
+                    Type=Application
+                    Terminal=false
+                    Categories=Game;
+                    Comment=Launch {} using Bottles.
+                    StartupWMClass={}""".format(
+                        exec_cmd, program.get("name"), program.get("executable").lower()
+                    ),
+                )
+                SignalManager.send(Signals.DesktopEntryCreated)
+            except GLib.Error as e:
+                logging.warning(
+                    f"Dynamic Launcher portal install failed: {e}. "
+                    "Falling back to manual creation."
+                )
+                create_manual_fallback(icon, exec_cmd)
 
-        portal = Xdp.Portal()
+        if icon != "com.usebottles.bottles-program" and not os.path.exists(icon):
+            logging.warning(f"Icon file not found: {icon}. Falling back to default.")
+            icon = "com.usebottles.bottles-program"
+
         if icon == "com.usebottles.bottles-program":
-            _icon = Gio.BytesIcon.new(icon.encode("utf-8"))
+            icon += ".svg"
+            _icon = Gio.File.new_for_uri(
+                f"resource:/com/usebottles/bottles/icons/scalable/apps/{icon}"
+            )
         else:
-            _icon = Gio.FileIcon.new(Gio.File.new_for_path(icon))
-        icon_v = _icon.serialize()
-        token = portal.dynamic_launcher_request_install_token(program.get("name"), icon_v)
-        portal.dynamic_launcher_install(
-            token,
-            f"com.usebottles.bottles.{config.get('Name')}.{program.get('name')}.{str(uuid.uuid4())}.desktop",
-            """
-            [Desktop Entry]
-            Exec={}
-            Type=Application
-            Terminal=false
-            Categories=Application;
-            Comment=Launch {} using Bottles.
-            Actions=Configure;
-            [Desktop Action Configure]
-            Name=Configure in Bottles
-            Exec={}
-            """.format(
-                f"{cmd_cli} run -p {shlex.quote(program.get('name'))} -b '{config.get('Path')}'",
-                program.get("name"),
-                f"{cmd_legacy} -b '{config.get('Name')}'"
-            ).encode("utf-8")
+            _icon = Gio.File.new_for_path(icon)
+        icon_v = Gio.BytesIcon.new(_icon.load_bytes()[0]).serialize()
+        portal.dynamic_launcher_prepare_install(
+            None,
+            program.get("name"),
+            icon_v,
+            Xdp.LauncherType.APPLICATION,
+            None,
+            True,
+            False,
+            None,
+            prepare_install_cb,
         )
-        '''
-        return False
 
     @staticmethod
     def browse_wineprefix(wineprefix: dict):

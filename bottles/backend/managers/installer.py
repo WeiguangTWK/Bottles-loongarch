@@ -96,11 +96,20 @@ class InstallerManager:
                 os.makedirs(bottle_icons_path)
 
             if not os.path.isfile(icon_path):
-                c = pycurl.Curl()
-                c.setopt(c.URL, icon_url)
-                c.setopt(c.WRITEDATA, open(icon_path, "wb"))
-                c.perform()
-                c.close()
+                try:
+                    with open(icon_path, "wb") as f:
+                        c = pycurl.Curl()
+                        _proxy = os.environ.get("http_proxy") or os.environ.get("https_proxy")
+                        if _proxy:
+                            c.setopt(pycurl.PROXY, _proxy)
+                        c.setopt(c.URL, icon_url)
+                        c.setopt(c.WRITEDATA, f)
+                        c.perform()
+                        c.close()
+                except pycurl.error as e:
+                    logging.error(f"Failed to download icon '{icon_url}': {e}")
+                    if os.path.isfile(icon_path):
+                        os.remove(icon_path)
 
     def __process_local_resources(self, exe_msi_steps, installer):
         files = self.has_local_resources(installer)
@@ -436,13 +445,15 @@ class InstallerManager:
                     )
 
         # register executable
-        if executable["path"].startswith("userdir/"):
+        exec_path = executable.get("path", "")
+        if exec_path.startswith("userdir/"):
             _userdir = WineUtils.get_user_dir(bottle)
-            executable["path"] = executable["path"].replace(
+            exec_path = exec_path.replace(
                 "userdir/", f"/users/{_userdir}/"
             )
+            executable["path"] = exec_path
 
-        _path = f"C:\\{executable['path']}".replace("/", "\\")
+        _path = f"C:\\{exec_path}".replace("/", "\\")
         _uuid = str(uuid.uuid4())
         _program = {
             "executable": executable["file"],

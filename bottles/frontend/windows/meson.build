@@ -14,15 +14,16 @@ bottles_sources = [
   'playtimegraph.py',
   'rename.py',
   'drives.py',
+  'funding.py',
   'gamescope.py',
   'vkbasalt.py',
-  'fsr.py',
   'mangohud.py',
   'display.py',
   'generic_cli.py',
   'journal.py',
   'bottlepicker.py',
   'protonalert.py',
+  'bulkupdate.py',
   'sandbox.py',
   'installer.py',
   'depscheck.py',
@@ -32,6 +33,10 @@ bottles_sources = [
   'upgradeversioning.py',
   'vmtouch.py',
   'window.py',
+  'versioning_settings.py',
+  'versioning_commit.py',
+  'versioning_branch.py',
+  'versioning_manage_branches.py',
 ]
 
 install_data(bottles_sources, install_dir: dialogsdir)

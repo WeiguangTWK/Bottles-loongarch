@@ -16,20 +16,17 @@
 #
 
 import os
-import re
 import uuid
 from datetime import datetime
 from gettext import gettext as _
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from bottles.backend.managers.backup import BackupManager
 from bottles.backend.models.config import BottleConfig
 from bottles.backend.models.result import Result
-from bottles.backend.runner import Runner
-from bottles.backend.state import SignalManager, Signals
-from bottles.backend.utils.generic import sort_by_version
+from bottles.backend.state import SignalManager, Signals, TaskManager
 from bottles.backend.utils.manager import ManagerUtils
 from bottles.backend.utils.terminal import TerminalUtils
 from bottles.backend.utils.threading import RunAsync
@@ -48,9 +45,12 @@ from bottles.frontend.utils.common import open_doc_url
 from bottles.frontend.utils.filters import add_all_filters, add_executable_filters
 from bottles.frontend.utils.gtk import GtkUtils
 from bottles.frontend.utils.playtime import PlaytimeService
+from bottles.frontend.utils.sandbox_guard import guard_sandbox_launch
 from bottles.frontend.widgets.program import ProgramEntry
 from bottles.frontend.windows.duplicate import DuplicateDialog
 from bottles.frontend.windows.upgradeversioning import UpgradeVersioningDialog
+from bottles.frontend.windows.versioning_settings import VersioningSettingsDialog
+from bottles.fvs.repo import FVSRepo
 
 
 @Gtk.Template(resource_path="/com/usebottles/bottles/details-bottle.ui")
@@ -66,6 +66,7 @@ class BottleView(Adw.PreferencesPage):
     install_programs = Gtk.Template.Child()
     add_shortcuts = Gtk.Template.Child()
     btn_execute = Gtk.Template.Child()
+    btn_eagle = Gtk.Template.Child()
     popover_exec_settings = Gtk.Template.Child()
     exec_arguments = Gtk.Template.Child()
     exec_terminal = Gtk.Template.Child()
@@ -97,7 +98,7 @@ class BottleView(Adw.PreferencesPage):
     btn_flatpak_doc = Gtk.Template.Child()
     label_name = Gtk.Template.Child()
     dot_versioning = Gtk.Template.Child()
-    grid_versioning = Gtk.Template.Child()
+    btn_versioning_badge = Gtk.Template.Child()
     group_programs = Gtk.Template.Child()
     group_updates = Gtk.Template.Child()
     actions = Gtk.Template.Child()
@@ -105,6 +106,10 @@ class BottleView(Adw.PreferencesPage):
     row_no_updates = Gtk.Template.Child()
     bottom_bar = Gtk.Template.Child()
     drop_overlay = Gtk.Template.Child()
+    box_backup_progress = Gtk.Template.Child()
+    spinner_backup = Gtk.Template.Child()
+    label_backup_progress = Gtk.Template.Child()
+    btn_snapshots_settings = Gtk.Template.Child()
     # endregion
 
     content = Gdk.ContentFormats.new_for_gtype(Gdk.FileList)
@@ -133,6 +138,12 @@ class BottleView(Adw.PreferencesPage):
         self._playtime_refresh_timeout_id = None
         SignalManager.connect(Signals.ProgramFinished, self._on_program_finished)
 
+        # Backup progress tracking
+        self._backup_task_id = None
+        SignalManager.connect(Signals.TaskAdded, self._on_task_added)
+        SignalManager.connect(Signals.TaskRemoved, self._on_task_removed)
+        SignalManager.connect(Signals.TaskUpdated, self._on_task_updated)
+
         self.target.connect("drop", self.on_drop)
         self.add_controller(self.target)
         self.target.connect("enter", self.on_enter)
@@ -141,10 +152,13 @@ class BottleView(Adw.PreferencesPage):
         self.add_shortcuts.connect("clicked", self.add)
         self.install_programs.connect("clicked", self.__change_page, "installers")
         self.btn_execute.connect("clicked", self.run_executable)
+        self.btn_eagle.connect("clicked", self.run_eagle)
         self.popover_exec_settings.connect("closed", self.__run_executable_with_args)
         self.row_preferences.connect("activated", self.__change_page, "preferences")
         self.row_dependencies.connect("activated", self.__change_page, "dependencies")
         self.row_snapshots.connect("activated", self.__change_page, "versioning")
+        self.btn_snapshots_settings.connect("clicked", self.__show_versioning_settings)
+        self.btn_versioning_badge.connect("clicked", self.__change_page, "versioning")
         self.row_taskmanager.connect("activated", self.__change_page, "taskmanager")
         self.row_winecfg.connect("activated", self.run_winecfg)
         self.row_debug.connect("activated", self.run_debug)
@@ -195,6 +209,28 @@ class BottleView(Adw.PreferencesPage):
         except:  # pylint: disable=bare-except
             pass
 
+    def __show_versioning_settings(self, widget):
+        """Open the Versioning settings dialog."""
+        dialog = VersioningSettingsDialog(window=self.window, config=self.config)
+        dialog.present()
+
+    def __update_fvs2_badge(self, bottle_path):
+        def _fetch():
+            try:
+                repo = FVSRepo(repo_path=bottle_path, no_init=True)
+                branch = repo.active_branch or "main"
+                commit = (repo.active_state_id or "")[:7]
+                return f"{branch}:{commit}" if commit else branch
+            except Exception:
+                return ""
+
+        @GtkUtils.run_in_main_loop
+        def _apply(result, error):
+            if result and not error:
+                self.label_state.set_text(result)
+
+        RunAsync(_fetch, _apply)
+
     def on_drop(self, drop_target, value: Gdk.FileList, x, y, user_data=None):
         self.drop_overlay.set_visible(False)
         files: List[Gio.File] = value.get_files()
@@ -204,17 +240,22 @@ class BottleView(Adw.PreferencesPage):
             ".exe" in file.get_basename().split("/")[-1]
             or ".msi" in file.get_basename().split("/")[-1]
         ):
-            executor = WineExecutor(
-                self.config,
-                exec_path=file.get_path(),
-                args=args,
-                terminal=self.config.run_in_terminal,
-            )
-
             def callback(a, b):
                 self.update_programs()
 
-            RunAsync(executor.run, callback)
+            def proceed(sandbox_override, exec_path):
+                executor = WineExecutor(
+                    self.config,
+                    exec_path=exec_path,
+                    args=args,
+                    terminal=self.config.run_in_terminal,
+                    sandbox_override=sandbox_override,
+                )
+                RunAsync(executor.run, callback)
+
+            guard_sandbox_launch(
+                self.window, self.config, file.get_path(), proceed
+            )
 
         else:
             self.window.show_toast(
@@ -249,15 +290,24 @@ class BottleView(Adw.PreferencesPage):
         # set environment
         self.label_environment.set_text(_(self.config.Environment))
 
-        # set versioning
-        self.dot_versioning.set_visible(self.config.Versioning)
-        self.grid_versioning.set_visible(self.config.Versioning)
-        self.label_state.set_text(str(self.config.State))
+        # set versioning badge
+        has_old_versioning = self.config.Versioning
+        bottle_path = ManagerUtils.get_bottle_path(config)
+        has_fvs2 = os.path.exists(os.path.join(bottle_path, ".fvs2"))
+        show_badge = has_old_versioning or has_fvs2
+        self.dot_versioning.set_visible(show_badge)
+        self.btn_versioning_badge.set_visible(show_badge)
+
+        if has_old_versioning:
+            self.label_state.set_text(str(self.config.State))
+        elif has_fvs2:
+            self.label_state.set_text("…")
+            self.__update_fvs2_badge(bottle_path)
 
         self.__set_steam_rules()
 
         # check for old versioning system enabled
-        if config.Versioning:
+        if self.manager.versioning_manager.needs_migration(config):
             self.__upgrade_versioning()
 
         if (
@@ -282,7 +332,7 @@ class BottleView(Adw.PreferencesPage):
             if response != Gtk.ResponseType.ACCEPT:
                 return
 
-            path = dialog.get_file().get_path()
+            path = ManagerUtils.resolve_portal_path(dialog.get_file().get_path())
             basename = dialog.get_file().get_basename()
 
             _uuid = str(uuid.uuid4())
@@ -448,188 +498,70 @@ class BottleView(Adw.PreferencesPage):
         self._playtime_refresh_pending = True
         self._playtime_refresh_timeout_id = GLib.timeout_add(500, do_refresh)
 
+    def _on_task_added(self, data=None):
+        """Signal handler for TaskAdded events. Shows spinner if backup task starts."""
+        if not data or not data.data:
+            return
+
+        task_id = data.data
+        task = TaskManager.get(task_id)
+        if not task:
+            return
+
+        # Check if this is a backup task for our bottle
+        backup_title = _("Backup {0}").format(self.config.Name)
+        if task.title == backup_title:
+            self._backup_task_id = task_id
+            GLib.idle_add(self._show_backup_progress)
+
+    def _on_task_removed(self, data=None):
+        """Signal handler for TaskRemoved events. Hides spinner if backup task."""
+        if not data or not data.data:
+            return
+
+        task_id = data.data
+        if task_id == self._backup_task_id:
+            self._backup_task_id = None
+            GLib.idle_add(self._hide_backup_progress)
+
+    def _on_task_updated(self, data=None):
+        """Signal handler for TaskUpdated events. Updates progress label."""
+        if not data or not data.data:
+            return
+
+        task_id = data.data
+        if task_id == self._backup_task_id:
+            task = TaskManager.get(task_id)
+            if task and task.subtitle:
+                GLib.idle_add(self._update_backup_progress, task.subtitle)
+
+    def _show_backup_progress(self):
+        """Show the backup progress indicator."""
+        self.label_backup_progress.set_text("")
+        self.box_backup_progress.set_visible(True)
+        self.spinner_backup.start()
+
+    def _hide_backup_progress(self):
+        """Hide the backup progress indicator."""
+        self.spinner_backup.stop()
+        self.box_backup_progress.set_visible(False)
+
+    def _update_backup_progress(self, text: str):
+        """Update the backup progress label."""
+        self.label_backup_progress.set_text(text)
+
     def populate_updates(self):
         for row in self.__update_rows:
             self.group_updates.remove(row)
         self.__update_rows = []
 
-        updates = self.__collect_component_updates()
+        updates = self.manager.get_component_updates(self.config)
         self.row_no_updates.set_visible(len(updates) == 0)
 
         for update in updates:
             row = self.__build_update_row(update)
             self.group_updates.add(row)
             self.__update_rows.append(row)
-
-    def __collect_component_updates(self) -> List[Dict[str, object]]:
-        updates: List[Dict[str, object]] = []
-
-        runner_update = self.__collect_runner_update()
-        if runner_update:
-            updates.append(runner_update)
-
-        component_meta = {
-            "dxvk": {
-                "title": _("DXVK"),
-                "enabled": self.config.Parameters.dxvk,
-                "current": self.config.DXVK,
-                "supported": self.manager.supported_dxvk,
-            },
-            "vkd3d": {
-                "title": _("VKD3D"),
-                "enabled": self.config.Parameters.vkd3d,
-                "current": self.config.VKD3D,
-                "supported": self.manager.supported_vkd3d,
-            },
-            "nvapi": {
-                "title": _("NVAPI"),
-                "enabled": self.config.Parameters.dxvk_nvapi,
-                "current": self.config.NVAPI,
-                "supported": self.manager.supported_nvapi,
-            },
-            "latencyflex": {
-                "title": _("LatencyFleX"),
-                "enabled": self.config.Parameters.latencyflex,
-                "current": self.config.LatencyFleX,
-                "supported": self.manager.supported_latencyflex,
-            },
-        }
-
-        for component, meta in component_meta.items():
-            entry = self.__collect_dll_component_update(component, meta)
-            if entry:
-                updates.append(entry)
-
-        winebridge_entry = self.__collect_winebridge_update()
-        if winebridge_entry:
-            updates.append(winebridge_entry)
-
-        return updates
-
-    def __collect_dll_component_update(
-        self, component: str, meta: Dict[str, object]
-    ) -> Optional[Dict[str, object]]:
-        if not meta["enabled"] or not meta["current"] or not meta["supported"]:
-            return None
-
-        latest = self.__get_latest_supported(meta["supported"])
-        if not latest or not self.__is_version_newer(latest, meta["current"]):
-            return None
-
-        return {
-            "id": component,
-            "title": meta["title"],
-            "current": meta["current"],
-            "latest": latest,
-            "handler": self.__update_dll_component,
-            "kwargs": {"component": component, "version": latest},
-        }
-
-    def __collect_runner_update(self) -> Optional[Dict[str, object]]:
-        runner = self.config.Runner or ""
-        if not runner or runner.startswith("sys-"):
-            return None
-
-        candidates, component_type = self.__resolve_runner_catalog(runner)
-        if not candidates or not component_type:
-            return None
-
-        try:
-            latest = sort_by_version(candidates.copy())[0]
-        except ValueError:
-            latest = sorted(candidates, reverse=True)[0]
-
-        if not self.__is_version_newer(latest, runner):
-            return None
-
-        return {
-            "id": "runner",
-            "title": _("Runner"),
-            "current": runner,
-            "latest": latest,
-            "handler": self.__update_runner_component,
-            "kwargs": {"runner": latest, "component_type": component_type},
-        }
-
-    def __collect_winebridge_update(self) -> Optional[Dict[str, object]]:
-        if not self.config.Parameters.winebridge:
-            return None
-
-        latest = self.__get_latest_supported(self.manager.supported_winebridge)
-        installed = (
-            self.manager.winebridge_available[0]
-            if self.manager.winebridge_available
-            else None
-        )
-
-        if not latest or not self.__is_version_newer(latest, installed):
-            return None
-
-        return {
-            "id": "winebridge",
-            "title": _("WineBridge"),
-            "current": installed or _("Not installed"),
-            "latest": latest,
-            "handler": self.__update_winebridge_component,
-            "kwargs": {"version": latest},
-        }
-
-    def __resolve_runner_catalog(self, runner: str) -> Tuple[List[str], str]:
-        wine_candidates = self.__match_runner_candidates(
-            runner, self.manager.supported_wine_runners
-        )
-        if wine_candidates:
-            return wine_candidates, "runner"
-
-        proton_candidates = self.__match_runner_candidates(
-            runner, self.manager.supported_proton_runners
-        )
-        if proton_candidates:
-            return proton_candidates, "runner:proton"
-
-        return [], ""
-
-    def __match_runner_candidates(self, runner: str, catalog: dict) -> List[str]:
-        if not catalog:
-            return []
-        family = self.__runner_family(runner)
-        return [
-            name for name in catalog.keys() if name.lower().startswith(family) and name
-        ]
-
-    @staticmethod
-    def __runner_family(runner: str) -> str:
-        normalized = runner.lower()
-        match = re.search(r"\d", normalized)
-        if match:
-            candidate = normalized[: match.start()].rstrip("-")
-            if candidate:
-                return candidate
-        if "-" in normalized:
-            return normalized.split("-")[0]
-        return normalized
-
-    @staticmethod
-    def __get_latest_supported(supported_dict: dict) -> Optional[str]:
-        if not supported_dict:
-            return None
-        keys = list(supported_dict.keys())
-        try:
-            return sort_by_version(keys)[0]
-        except ValueError:
-            return sorted(keys, reverse=True)[0]
-
-    def __is_version_newer(self, latest: str, current: Optional[str]) -> bool:
-        if not latest:
-            return False
-        if not current:
-            return True
-        versions = [latest, current]
-        try:
-            ordered = sort_by_version(versions.copy())
-        except ValueError:
-            ordered = sorted(versions, reverse=True)
-        return ordered[0] == latest and latest != current
 
     def __build_update_row(self, update: Dict[str, object]) -> Adw.ActionRow:
         row = Adw.ActionRow()
@@ -657,9 +589,6 @@ class BottleView(Adw.PreferencesPage):
         spinner.set_visible(True)
         spinner.start()
         button.set_sensitive(False)
-
-        kwargs = dict(update.get("kwargs", {}))
-        kwargs["config"] = self.config
 
         def handle_response(result, error=False):
             spinner.stop()
@@ -697,76 +626,11 @@ class BottleView(Adw.PreferencesPage):
             self.window.show_toast(message)
 
         RunAsync(
-            task_func=update["handler"],
+            task_func=self.manager.apply_component_update,
             callback=handle_response,
-            **kwargs,
+            config=self.config,
+            update=update,
         )
-
-    def __ensure_component_available(self, component: str, version: str) -> Result:
-        availability_attrs = {
-            "dxvk": "dxvk_available",
-            "vkd3d": "vkd3d_available",
-            "nvapi": "nvapi_available",
-            "latencyflex": "latencyflex_available",
-        }
-        available = getattr(self.manager, availability_attrs[component], [])
-        if version in available:
-            return Result(True)
-        return self.manager.component_manager.install(component, version)
-
-    def __update_dll_component(
-        self, *, component: str, version: str, config: BottleConfig
-    ) -> Result:
-        ensure = self.__ensure_component_available(component, version)
-        if not ensure.ok:
-            return ensure
-
-        remove_res = self.manager.install_dll_component(
-            config=config, component=component, remove=True
-        )
-        if not remove_res.ok:
-            return remove_res
-
-        key_map = {
-            "dxvk": "DXVK",
-            "vkd3d": "VKD3D",
-            "nvapi": "NVAPI",
-            "latencyflex": "LatencyFleX",
-        }
-        update_res = self.manager.update_config(
-            config=config, key=key_map[component], value=version
-        )
-        if not update_res.ok:
-            return update_res
-        updated_config = update_res.data["config"]
-
-        install_res = self.manager.install_dll_component(
-            config=updated_config, component=component, version=version
-        )
-        if not install_res.ok:
-            return install_res
-
-        return Result(True, data={"config": updated_config})
-
-    def __update_runner_component(
-        self,
-        *,
-        runner: str,
-        component_type: str,
-        config: BottleConfig,
-    ) -> Result:
-        if runner not in self.manager.runners_available:
-            res = self.manager.component_manager.install(component_type, runner)
-            if not res.ok:
-                return res
-        return Runner.runner_update(config=config, manager=self.manager, runner=runner)
-
-    def __update_winebridge_component(
-        self, *, version: str, config: BottleConfig
-    ) -> Result:
-        if version in self.manager.winebridge_available:
-            return Result(True)
-        return self.manager.component_manager.install("winebridge", version)
 
     def __run_executable_with_args(self, widget):
         """
@@ -790,22 +654,27 @@ class BottleView(Adw.PreferencesPage):
                 if response != Gtk.ResponseType.ACCEPT:
                     return
 
-                self.window.show_toast(
-                    _('Launching "{0}"…').format(dialog.get_file().get_basename())
-                )
-
-                executor = WineExecutor(
-                    self.config,
-                    exec_path=dialog.get_file().get_path(),
-                    args=self.config.get("session_arguments"),
-                    terminal=self.config.get("run_in_terminal"),
-                    program_winebridge=self.exec_winebridge.get_active(),
-                )
+                exec_path = dialog.get_file().get_path()
 
                 def callback(a, b):
                     self.update_programs()
 
-                RunAsync(executor.run, callback)
+                def proceed(sandbox_override, run_path):
+                    self.window.show_toast(
+                        _('Launching "{0}"…').format(
+                            dialog.get_file().get_basename()
+                        )
+                    )
+                    executor = WineExecutor(
+                        self.config,
+                        exec_path=run_path,
+                        args=self.config.get("session_arguments"),
+                        terminal=self.config.run_in_terminal,
+                        sandbox_override=sandbox_override,
+                    )
+                    RunAsync(executor.run, callback)
+
+                guard_sandbox_launch(self.window, self.config, exec_path, proceed)
 
             dialog = Gtk.FileChooserNative.new(
                 title=_("Select Executable"),
@@ -817,6 +686,9 @@ class BottleView(Adw.PreferencesPage):
             add_executable_filters(dialog)
             add_all_filters(dialog)
             dialog.set_modal(True)
+            dialog.set_current_folder(
+                Gio.File.new_for_path(ManagerUtils.get_bottle_path(self.config))
+            )
             dialog.connect("response", execute)
             dialog.show()
 
@@ -911,7 +783,17 @@ class BottleView(Adw.PreferencesPage):
 
         def handle_response(_widget, response_id):
             if response_id == "ok":
-                RunAsync(self.manager.delete_bottle, config=self.config)
+
+                def _on_deleted(_result=False, _error=False):
+                    # refresh on the main loop so the list (and its empty state
+                    # when the last bottle is gone) repaints correctly
+                    self.window.page_list.update_bottles_list()
+
+                RunAsync(
+                    self.manager.delete_bottle,
+                    callback=_on_deleted,
+                    config=self.config,
+                )
                 self.window.page_list.disable_bottle(self.config)
             _widget.destroy()
 

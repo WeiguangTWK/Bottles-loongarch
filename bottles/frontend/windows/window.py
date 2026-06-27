@@ -36,7 +36,7 @@ from bottles.backend.state import Notification, SignalManager, Signals
 from bottles.backend.utils.connection import ConnectionUtils
 from bottles.backend.utils.threading import RunAsync
 from bottles.frontend.operation import TaskSyncer
-from bottles.frontend.params import APP_ID, BASE_ID, PROFILE
+from bottles.frontend.params import APP_ID, PROFILE
 from bottles.frontend.utils.gtk import GtkUtils
 from bottles.frontend.views.details import DetailsView
 from bottles.frontend.views.importer import ImporterView
@@ -49,6 +49,7 @@ from bottles.frontend.windows.crash import CrashReportDialog
 from bottles.frontend.windows.depscheck import DependenciesCheckDialog
 from bottles.frontend.windows.onboard import OnboardDialog
 from bottles.frontend.windows.winebridgeupdate import WineBridgeUpdateDialog
+from bottles.frontend.windows.funding import FundingDialog
 
 logging = Logger()
 
@@ -63,6 +64,7 @@ class BottlesWindow(Adw.ApplicationWindow):
     btn_search = Gtk.Template.Child()
     btn_donate = Gtk.Template.Child()
     btn_noconnection = Gtk.Template.Child()
+    banner_offline = Gtk.Template.Child()
     box_actions = Gtk.Template.Child()
     headerbar = Gtk.Template.Child()
     view_switcher_title = Gtk.Template.Child()
@@ -73,7 +75,7 @@ class BottlesWindow(Adw.ApplicationWindow):
 
     # Common variables
     previous_page = ""
-    settings = Gio.Settings.new(BASE_ID)
+    settings = Gio.Settings.new(APP_ID)
     argument_executed = False
     _winebridge_dialog_shown = False
 
@@ -84,14 +86,23 @@ class BottlesWindow(Adw.ApplicationWindow):
         super().__init__(**kwargs, default_width=width, default_height=height)
 
         self.data_mgr = DataManager()
-        first_event = JournalManager.first_event_date()
-        days_old = 0
-        if first_event:
-            days_old = (datetime.now() - first_event).days
-
-        self._show_funding = days_old >= 7 and not self.data_mgr.get(
-            UserDataKeys.FundingDismissed
-        )
+        self._show_funding = False
+        
+        show_funding_setting = self.settings.get_boolean("show-funding")
+        dismissed = self.data_mgr.get(UserDataKeys.FundingDismissed, False)
+        
+        if show_funding_setting and not dismissed:
+            last_prompt = self.data_mgr.get(UserDataKeys.LastFundingPrompt, "")
+            
+            if not last_prompt:
+                self._show_funding = True
+            else:
+                try:
+                    last_date = datetime.strptime(last_prompt, "%Y-%m-%d")
+                    if datetime.now() - last_date >= timedelta(days=7):
+                        self._show_funding = True
+                except ValueError:
+                    self._show_funding = True
 
         self.utils_conn = ConnectionUtils(
             force_offline=self.settings.get_boolean("force-offline")
@@ -131,6 +142,7 @@ class BottlesWindow(Adw.ApplicationWindow):
         )
         self.btn_add.connect("clicked", self.show_add_view)
         self.btn_noconnection.connect("clicked", self.check_for_connection)
+        self.banner_offline.connect("button-clicked", self.check_for_connection)
         self.stack_main.connect("notify::visible-child", self.__on_page_changed)
 
         # backend signal handlers
@@ -147,6 +159,12 @@ class BottlesWindow(Adw.ApplicationWindow):
         )
         SignalManager.connect(Signals.GNotification, self.g_notification_handler)
         SignalManager.connect(Signals.GShowUri, self.g_show_uri_handler)
+
+        # keep the session awake while one or more programs are running
+        self.__inhibit_cookie = 0
+        self.__running_launches = set()
+        SignalManager.connect(Signals.ProgramStarted, self.__on_program_started)
+        SignalManager.connect(Signals.ProgramFinished, self.__on_program_finished)
 
         self.__on_start()
         logging.info(
@@ -194,18 +212,53 @@ class BottlesWindow(Adw.ApplicationWindow):
         self.settings.set_int("window-height", self.get_height())
 
     # region Backend signal handlers
+    @GtkUtils.run_in_main_loop
     def network_changed_handler(self, res: Result):
-        GLib.idle_add(self.btn_noconnection.set_visible, not res.status)
+        self.banner_offline.set_revealed(not res.status)
 
+    @GtkUtils.run_in_main_loop
     def g_notification_handler(self, res: Result):
         """handle backend notification request"""
         notify: Notification = res.data
         self.send_notification(title=notify.title, text=notify.text, image=notify.image)
 
+    @GtkUtils.run_in_main_loop
     def g_show_uri_handler(self, res: Result):
         """handle backend show_uri request"""
         uri: str = res.data
         Gtk.show_uri(self, uri, Gdk.CURRENT_TIME)
+
+    @GtkUtils.run_in_main_loop
+    def __on_program_started(self, res: Result):
+        """Inhibit session idle while a program is running, so the screen does
+        not blank during controller-only gameplay."""
+        launch_id = getattr(res.data, "launch_id", None)
+        if launch_id is None:
+            return
+        self.__running_launches.add(launch_id)
+
+        if self.__inhibit_cookie:
+            return
+        app = self.get_application()
+        if app:
+            self.__inhibit_cookie = app.inhibit(
+                self,
+                Gtk.ApplicationInhibitFlags.IDLE | Gtk.ApplicationInhibitFlags.SUSPEND,
+                _("A program is running"),
+            )
+
+    @GtkUtils.run_in_main_loop
+    def __on_program_finished(self, res: Result):
+        launch_id = getattr(res.data, "launch_id", None)
+        if launch_id is not None:
+            self.__running_launches.discard(launch_id)
+
+        if self.__running_launches or not self.__inhibit_cookie:
+            return
+        app = self.get_application()
+        if app:
+            app.uninhibit(self.__inhibit_cookie)
+        self.__inhibit_cookie = 0
 
     # endregion
 
@@ -216,14 +269,20 @@ class BottlesWindow(Adw.ApplicationWindow):
         self.view_switcher_title.set_title(title)
         self.view_switcher_title.set_subtitle(subtitle)
 
-    def check_for_connection(self, status):
+    def check_for_connection(self, *_args):
         """
         This method checks if the client has an internet connection.
         If true, the manager checks will be performed, unlocking all the
-        features locked for no internet connection.
+        features locked for no internet connection. Runs off the main loop so
+        the UI stays responsive and the component catalog is refetched, so the
+        runners/components/dependencies tabs work again without a restart.
         """
-        if self.utils_conn.check_connection():
-            self.manager.checks(install_latest=False, first_run=True)
+
+        def task():
+            if self.utils_conn.check_connection():
+                self.manager.checks(install_latest=False, first_run=True)
+
+        RunAsync(task)
 
     def __maybe_prompt_winebridge_update(self):
         if self._winebridge_dialog_shown or self._showing_onboard:
@@ -425,24 +484,21 @@ class BottlesWindow(Adw.ApplicationWindow):
         if not self._show_funding:
             return
 
-        dialog = Adw.MessageDialog.new(
-            self,
-            _("Support Bottles"),
-            _(
-                "With over 3 million installations, Bottles is built by and for its community."
-                "\nA donation today helps secure its future and keep it truly independent."
-            ),
-        )
-        dialog.add_response("donate", _("Donate"))
-        dialog.add_response("dismiss", _("Don't Show Again"))
-        dialog.set_response_appearance("donate", Adw.ResponseAppearance.SUGGESTED)
+        count = self.data_mgr.get(UserDataKeys.FundingPromptCount) or 0
+        self.data_mgr.set(UserDataKeys.FundingPromptCount, count + 1)
+        
+        today = datetime.now().strftime("%Y-%m-%d")
+        self.data_mgr.set(UserDataKeys.LastFundingPrompt, today)
+
+        dialog = FundingDialog(self, show_dont_show=count >= 7)
         dialog.connect("response", self.__funding_response)
         dialog.present()
 
     def __funding_response(self, dialog, response):
-        if response == "donate":
-            self.open_url(None, "https://usebottles.com/funding/")
-        self.data_mgr.set(UserDataKeys.FundingDismissed, True)
+        if response == "dismiss":
+            self.data_mgr.set(UserDataKeys.FundingDismissed, True)
+            self.settings.set_boolean("show-funding", False)
+
         dialog.destroy()
 
     def toggle_selection_mode(self, status: bool = True):

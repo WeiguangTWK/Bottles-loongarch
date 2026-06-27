@@ -85,6 +85,173 @@
     <display_length compare="ge">768</display_length>
   </requires>
   <releases>
+    <release version="64.1" date="2026-05-30">
+      <description translate="no">
+        <ul>
+          <li>Fixed nothing launching in a dedicated sandbox when the program is stored outside the bottle, Bottles now warns and lets you run it without the sandbox or copy it into the bottle and keep the sandbox on</li>
+          <li>Eagle now scans executables for known malware and stealer patterns and warns you before running a flagged program</li>
+          <li>Eagle automatically offers to analyze a program when it crashes or closes immediately</li>
+          <li>Eagle results now include a security section and a way to support Bottles</li>
+          <li>Added settings to control Eagle threat scanning and crash detection</li>
+          <li>Added ntsync support</li>
+          <li>Added a home card and dialog to update components across all bottles at once</li>
+          <li>Added a toggle to enable or disable a program launch arguments</li>
+          <li>MANGOHUD_CONFIG is now inherited from the host environment by default</li>
+          <li>Bottles now logs an environment summary when launched from a terminal</li>
+          <li>The bottles list now shows an offline banner and refreshes components when the connection returns</li>
+          <li>Bottles now warns when a bottle location is offline instead of silently hiding it</li>
+          <li>Fixed drastically slow startup and UI freezes with many programs or library entries</li>
+          <li>Fixed app names with spaces breaking the desktop entry links</li>
+          <li>Fixed desktop entry creation on KDE and Wayland</li>
+          <li>Fixed the desktop entry category and sanitized the bottle name in the entry filename</li>
+          <li>Fixed the lowercase executable name used for StartupWMClass</li>
+          <li>Fixed Manager startup side effects during CLI launches</li>
+          <li>Fixed stopping processes running inside a dedicated sandbox</li>
+          <li>Fixed the Steam Runtime being left enabled when switching to a non-Proton runner</li>
+          <li>Fixed incorrect runner update suggestions across runner variants</li>
+          <li>Fixed bottle creation aborting when optional components such as NVAPI or LatencyFleX were unavailable</li>
+          <li>Fixed the CLI being forced offline so bottle creation can fetch components</li>
+          <li>Fixed runners and DLLs not listing in preferences when offline</li>
+          <li>Fixed the connectivity check hanging the first setup</li>
+          <li>Fixed reusing an already downloaded dependency regardless of its filename case</li>
+          <li>Fixed Gamescope not working with the dedicated sandbox</li>
+          <li>Fixed exposing the Proton runner path and runtime to the dedicated sandbox</li>
+          <li>Fixed transient document portal paths breaking custom bottle directories and shortcuts</li>
+          <li>Fixed FVS repositories using a larger block size to avoid huge file counts</li>
+          <li>Fixed transient files being copied when caching a bottle template</li>
+          <li>Fixed session idle not being inhibited while a program is running, so the screen no longer blanks</li>
+          <li>Fixed the bottle language encoding to default to UTF-8</li>
+          <li>Fixed program names with symbols such as ampersand not rendering correctly</li>
+          <li>Fixed the dependencies search not resetting when the entry is cleared</li>
+          <li>Fixed the snapshot list not refreshing after restoring a state</li>
+          <li>Fixed the bottles list not refreshing after deleting the last bottle</li>
+          <li>Fixed being able to skip the welcome steps by swiping</li>
+          <li>Use an env based shebang for the standalone script</li>
+          <li>Dropped deprecated variables</li>
+        </ul>
+      </description>
+    </release>
+    <release version="64.0" date="2026-05-29">
+      <description translate="no">
+        <ul>
+          <li>Eagle now scans executables for known malware and stealer patterns and warns you before running a flagged program</li>
+          <li>Eagle automatically offers to analyze a program when it crashes or closes immediately</li>
+          <li>Eagle results now include a security section and a way to support Bottles</li>
+          <li>Added settings to control Eagle threat scanning and crash detection</li>
+          <li>Added ntsync support</li>
+          <li>Added a home card and dialog to update components across all bottles at once</li>
+          <li>Added a toggle to enable or disable a program launch arguments</li>
+          <li>MANGOHUD_CONFIG is now inherited from the host environment by default</li>
+          <li>Bottles now logs an environment summary when launched from a terminal</li>
+          <li>The bottles list now shows an offline banner and refreshes components when the connection returns</li>
+          <li>Bottles now warns when a bottle location is offline instead of silently hiding it</li>
+          <li>Fixed drastically slow startup and UI freezes with many programs or library entries</li>
+          <li>Fixed app names with spaces breaking the desktop entry links</li>
+          <li>Fixed desktop entry creation on KDE and Wayland</li>
+          <li>Fixed the desktop entry category and sanitized the bottle name in the entry filename</li>
+          <li>Fixed the lowercase executable name used for StartupWMClass</li>
+          <li>Fixed Manager startup side effects during CLI launches</li>
+          <li>Fixed stopping processes running inside a dedicated sandbox</li>
+          <li>Fixed the Steam Runtime being left enabled when switching to a non-Proton runner</li>
+          <li>Fixed incorrect runner update suggestions across runner variants</li>
+          <li>Fixed bottle creation aborting when optional components such as NVAPI or LatencyFleX were unavailable</li>
+          <li>Fixed the CLI being forced offline so bottle creation can fetch components</li>
+          <li>Fixed runners and DLLs not listing in preferences when offline</li>
+          <li>Fixed the connectivity check hanging the first setup</li>
+          <li>Fixed reusing an already downloaded dependency regardless of its filename case</li>
+          <li>Fixed Gamescope not working with the dedicated sandbox</li>
+          <li>Fixed exposing the Proton runner path and runtime to the dedicated sandbox</li>
+          <li>Fixed transient document portal paths breaking custom bottle directories and shortcuts</li>
+          <li>Fixed FVS repositories using a larger block size to avoid huge file counts</li>
+          <li>Fixed transient files being copied when caching a bottle template</li>
+          <li>Fixed session idle not being inhibited while a program is running, so the screen no longer blanks</li>
+          <li>Fixed the bottle language encoding to default to UTF-8</li>
+          <li>Fixed program names with symbols such as ampersand not rendering correctly</li>
+          <li>Fixed the dependencies search not resetting when the entry is cleared</li>
+          <li>Fixed the snapshot list not refreshing after restoring a state</li>
+          <li>Fixed the bottles list not refreshing after deleting the last bottle</li>
+          <li>Fixed being able to skip the welcome steps by swiping</li>
+          <li>Use an env based shebang for the standalone script</li>
+          <li>Dropped deprecated variables</li>
+        </ul>
+      </description>
+    </release>
+    <release version="63.2" date="2026-04-01">
+      <description translate="no">
+        <ul>
+          <li>Fixed a crash in the UI while creating a new state</li>
+        </ul>
+      </description>
+    </release>
+    <release version="63.1" date="2026-04-01">
+      <description translate="no">
+        <ul>
+          <li>Fixed a stuck in startup</li>
+          <li>Improved Bottles shutdown logic to force kill inactive bottles</li>
+          <li>Avoid crashing if Vulkan is not available</li>
+          <li>Updated Bottles' versioning system to FVSv2 0.1.5, improving performance and commit strategy</li>
+          <li>Now Bottles ensures there is enough space before creating a snapshot</li>
+          <li>Fixed a crash in the Dependency Manager due to incorrect path parsing</li>
+        </ul>
+      </description>
+    </release>
+    <release version="63.0" date="2026-03-22">
+      <description translate="no">
+        <ul>
+          <li>Migrate internal state management to the new FVS v2</li>
+          <li>Make the bottles library list sort alphanumerically automatically</li>
+          <li>Add HTTP/HTTPS Proxy Support for all downloads and network operations</li>
+          <li>Automatically register manually added fonts into the wine prefix on startup</li>
+          <li>Improve detection and robust availability checks for Gamescope, MangoHud, and OBS Vulkan Capture</li>
+          <li>Added an option to disable both Gamescope Fullscreen and Borderless window modes</li>
+          <li>Significantly improve reliability of Steam shortcuts and desktop entries for Flatpak environments</li>
+          <li>Fix terminal and UI breaking when launching executables with spaces in paths</li>
+          <li>Fix getting stuck at the installing app screen</li>
+          <li>Fix crash when encountering 0-byte ghost files during downloads</li>
+          <li>Resolve issues with some ICO files not converting to PNG</li>
+          <li>Fix ignore rules and typos for templates with mismatched UUIDs</li>
+          <li>Ignore .tmp files when restoring or copying registry backups</li>
+          <li>Handle missing executable paths and icons more gracefully</li>
+          <li>Various code quality enhancements and network refactoring</li>
+          <li>Updated translations from Hosted Weblate</li>
+        </ul>
+      </description>
+    </release>
+    <release version="62.0" date="2026-02-16">
+      <description translate="no">
+        <ul>
+          <li>Fix: Detect GPUs categorized as Display controller</li>
+          <li>Allow adding valid system environment variable names</li>
+          <li>Fix: Flatpak devel build bottles-cli functionality</li>
+          <li>Fix: Daily donation nag screen</li>
+          <li>Add support for the Dynamic Launcher portal</li>
+          <li>Provide progress information on backup and restore</li>
+          <li>FSR: Only set in Gamescope (remove Wine FSR)</li>
+          <li>Code cleanups, including removal of redundant 'finally' blocks</li>
+          <li>Updated translations from Hosted Weblate</li>
+          <li>General bug fixes and improvements</li>
+        </ul>
+      </description>
+    </release>
+    <release version="61.1" date="2026-01-25">
+      <description translate="no">
+        <ul>
+          <li>Eagle: A new integrated tool for deep binary analysis that scans for frameworks, runtimes, and potential issues (like Anti-cheat), providing transparent configuration insights and dependency suggestions</li>
+          <li>New playtime aggregation modal</li>
+          <li>Support for custom Gamescope options</li>
+          <li>Added support for WezTerm terminal</li>
+          <li>Improved version ordering logic</li>
+          <li>Fixed Gamescope installation command</li>
+          <li>Updated broken dependency installation commands</li>
+          <li>Fixed: Wine library and GStreamer paths are no longer overridden when using system Wine</li>
+          <li>Fixed: Desktop Entry Exec key now correctly handles values containing spaces</li>
+          <li>Removed underline characters from main menu items for a cleaner UI</li>
+          <li>Code cleanups, including removal of redundant 'finally' blocks</li>
+          <li>Updated translations from Hosted Weblate</li>
+          <li>General bug fixes and improvements</li>
+        </ul>
+      </description>
+    </release>
     <release version="60" date="2025-11-22">
       <description translate="no">
         <ul>

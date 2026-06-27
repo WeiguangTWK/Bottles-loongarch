@@ -21,6 +21,7 @@ from gi.repository import Adw, GLib, GObject, Gtk
 
 from bottles.backend.logger import Logger
 from bottles.backend.utils.manager import ManagerUtils
+from bottles.backend.utils.vulkan import VulkanUtils
 
 logging = Logger()
 
@@ -34,6 +35,7 @@ class LaunchOptionsDialog(Adw.Window):
 
     # region Widgets
     entry_arguments = Gtk.Template.Child()
+    switch_arguments = Gtk.Template.Child()
     btn_save = Gtk.Template.Child()
     btn_pre_script = Gtk.Template.Child()
     btn_pre_script_reset = Gtk.Template.Child()
@@ -49,14 +51,12 @@ class LaunchOptionsDialog(Adw.Window):
     switch_dxvk = Gtk.Template.Child()
     switch_vkd3d = Gtk.Template.Child()
     switch_nvapi = Gtk.Template.Child()
-    switch_fsr = Gtk.Template.Child()
     switch_winebridge = Gtk.Template.Child()
     switch_gamescope = Gtk.Template.Child()
     switch_virt_desktop = Gtk.Template.Child()
     action_dxvk = Gtk.Template.Child()
     action_vkd3d = Gtk.Template.Child()
     action_nvapi = Gtk.Template.Child()
-    action_fsr = Gtk.Template.Child()
     action_winebridge = Gtk.Template.Child()
     action_gamescope = Gtk.Template.Child()
     action_cwd = Gtk.Template.Child()
@@ -70,14 +70,17 @@ class LaunchOptionsDialog(Adw.Window):
     __msg_override = _("This setting overrides the bottle's global setting.")
 
     def __set_disabled_switches(self):
-        if not self.global_dxvk:
-            self.action_dxvk.set_subtitle(self.__msg_disabled.format("DXVK"))
+        vulkan_ok = VulkanUtils.check_support()
+        msg_no_vulkan = _("Vulkan is not available on this system.")
+
+        if not vulkan_ok or not self.global_dxvk:
+            self.action_dxvk.set_subtitle(msg_no_vulkan if not vulkan_ok else self.__msg_disabled.format("DXVK"))
             self.switch_dxvk.set_sensitive(False)
-        if not self.global_vkd3d:
-            self.action_vkd3d.set_subtitle(self.__msg_disabled.format("VKD3D"))
+        if not vulkan_ok or not self.global_vkd3d:
+            self.action_vkd3d.set_subtitle(msg_no_vulkan if not vulkan_ok else self.__msg_disabled.format("VKD3D"))
             self.switch_vkd3d.set_sensitive(False)
-        if not self.global_nvapi:
-            self.action_nvapi.set_subtitle(self.__msg_disabled.format("DXVK-NVAPI"))
+        if not vulkan_ok or not self.global_nvapi:
+            self.action_nvapi.set_subtitle(msg_no_vulkan if not vulkan_ok else self.__msg_disabled.format("DXVK-NVAPI"))
             self.switch_nvapi.set_sensitive(False)
         if not self.global_winebridge:
             self.action_winebridge.set_subtitle(
@@ -101,12 +104,15 @@ class LaunchOptionsDialog(Adw.Window):
         if program.get("arguments") not in ["", None]:
             self.entry_arguments.set_text(program.get("arguments"))
 
+        arguments_enabled = program.get("arguments_enabled", True)
+        self.switch_arguments.set_active(arguments_enabled)
+        self.entry_arguments.set_sensitive(arguments_enabled)
+
         # keeps track of toggled switches
         self.toggled = {}
         self.toggled["dxvk"] = False
         self.toggled["vkd3d"] = False
         self.toggled["dxvk_nvapi"] = False
-        self.toggled["fsr"] = False
         self.toggled["gamescope"] = False
         self.toggled["virtual_desktop"] = False
         self.toggled["winebridge"] = False
@@ -121,12 +127,12 @@ class LaunchOptionsDialog(Adw.Window):
         self.btn_cwd_reset.connect("clicked", self.__reset_cwd)
         self.btn_reset_defaults.connect("clicked", self.__reset_defaults)
         self.entry_arguments.connect("activate", self.__save)
+        self.switch_arguments.connect("notify::active", self.__toggle_arguments)
 
         # set overrides status
         self.global_dxvk = program_dxvk = config.Parameters.dxvk
         self.global_vkd3d = program_vkd3d = config.Parameters.vkd3d
         self.global_nvapi = program_nvapi = config.Parameters.dxvk_nvapi
-        self.global_fsr = program_fsr = config.Parameters.fsr
         self.global_gamescope = program_gamescope = config.Parameters.gamescope
         self.global_virt_desktop = program_virt_desktop = (
             config.Parameters.virtual_desktop
@@ -144,9 +150,6 @@ class LaunchOptionsDialog(Adw.Window):
         if self.program.get("dxvk_nvapi") is not None:
             program_nvapi = self.program.get("dxvk_nvapi")
             self.action_nvapi.set_subtitle(self.__msg_override)
-        if self.program.get("fsr") is not None:
-            program_fsr = self.program.get("fsr")
-            self.action_fsr.set_subtitle(self.__msg_override)
         if self.program.get("gamescope") is not None:
             program_gamescope = self.program.get("gamescope")
             self.action_gamescope.set_subtitle(self.__msg_override)
@@ -160,7 +163,6 @@ class LaunchOptionsDialog(Adw.Window):
         self.switch_dxvk.set_active(program_dxvk)
         self.switch_vkd3d.set_active(program_vkd3d)
         self.switch_nvapi.set_active(program_nvapi)
-        self.switch_fsr.set_active(program_fsr)
         self.switch_gamescope.set_active(program_gamescope)
         self.switch_virt_desktop.set_active(program_virt_desktop)
         self.switch_winebridge.set_active(program_winebridge)
@@ -173,9 +175,6 @@ class LaunchOptionsDialog(Adw.Window):
         )
         self.switch_nvapi.connect(
             "state-set", self.__check_override, self.action_nvapi, "dxvk_nvapi"
-        )
-        self.switch_fsr.connect(
-            "state-set", self.__check_override, self.action_fsr, "fsr"
         )
         self.switch_gamescope.connect(
             "state-set", self.__check_override, self.action_gamescope, "gamescope"
@@ -232,7 +231,6 @@ class LaunchOptionsDialog(Adw.Window):
         program_dxvk = self.switch_dxvk.get_state()
         program_vkd3d = self.switch_vkd3d.get_state()
         program_nvapi = self.switch_nvapi.get_state()
-        program_fsr = self.switch_fsr.get_state()
         program_gamescope = self.switch_gamescope.get_state()
         program_virt_desktop = self.switch_virt_desktop.get_state()
         program_winebridge = self.switch_winebridge.get_state()
@@ -240,13 +238,13 @@ class LaunchOptionsDialog(Adw.Window):
         self.__set_override("dxvk", program_dxvk, self.global_dxvk)
         self.__set_override("vkd3d", program_vkd3d, self.global_vkd3d)
         self.__set_override("dxvk_nvapi", program_nvapi, self.global_nvapi)
-        self.__set_override("fsr", program_fsr, self.global_fsr)
         self.__set_override("gamescope", program_gamescope, self.global_gamescope)
         self.__set_override(
             "virtual_desktop", program_virt_desktop, self.global_virt_desktop
         )
         self.__set_override("winebridge", program_winebridge, self.global_winebridge)
         self.program["arguments"] = self.entry_arguments.get_text()
+        self.program["arguments_enabled"] = self.switch_arguments.get_active()
 
         pre_args = self.entry_pre_script_args.get_text()
         post_args = self.entry_post_script_args.get_text()
@@ -266,6 +264,9 @@ class LaunchOptionsDialog(Adw.Window):
 
     def __save(self, *_args):
         GLib.idle_add(self.__idle_save)
+
+    def __toggle_arguments(self, *_args):
+        self.entry_arguments.set_sensitive(self.switch_arguments.get_active())
 
     def __choose_pre_script(self, *_args):
         def set_path(dialog, result):
@@ -390,14 +391,12 @@ class LaunchOptionsDialog(Adw.Window):
         self.switch_dxvk.set_active(self.global_dxvk)
         self.switch_vkd3d.set_active(self.global_vkd3d)
         self.switch_nvapi.set_active(self.global_nvapi)
-        self.switch_fsr.set_active(self.global_fsr)
         self.switch_gamescope.set_active(self.global_gamescope)
         self.switch_virt_desktop.set_active(self.global_virt_desktop)
         self.switch_winebridge.set_active(self.global_winebridge)
         self.action_dxvk.set_subtitle("")
         self.action_vkd3d.set_subtitle("")
         self.action_nvapi.set_subtitle("")
-        self.action_fsr.set_subtitle("")
         self.action_gamescope.set_subtitle("")
         self.action_virt_desktop.set_subtitle("")
         self.action_winebridge.set_subtitle("")

@@ -57,13 +57,16 @@ class WineExecutor:
         program_dxvk: Optional[bool] = None,
         program_vkd3d: Optional[bool] = None,
         program_nvapi: Optional[bool] = None,
-        program_fsr: Optional[bool] = None,
         program_gamescope: Optional[bool] = None,
         program_virt_desktop: Optional[bool] = None,
         program_winebridge: Optional[bool] = None,
+        sandbox_override: Optional[str] = None,
     ):
         logging.info("Launching an executable…")
         self.config = config
+        # Per-launch dedicated sandbox override (None / "off" / "legacy"); see
+        # WineCommand for the meaning of each value.
+        self.sandbox_override = sandbox_override
         self.__validate_path(exec_path)
 
         if monitoring is None:
@@ -116,16 +119,6 @@ class WineExecutor:
                 override_nvapi = NVAPIComponent.get_override_keys() + "=b"
                 env_dll_overrides.append(override_nvapi)
 
-        if program_fsr is not None and program_fsr != self.config.Parameters.fsr:
-            self.environment["WINE_FULLSCREEN_FSR"] = "1" if program_fsr else "0"
-            self.environment["WINE_FULLSCREEN_FSR_STRENGTH"] = str(
-                self.config.Parameters.fsr_sharpening_strength
-            )
-            if self.config.Parameters.fsr_quality_mode:
-                self.environment["WINE_FULLSCREEN_FSR_MODE"] = str(
-                    self.config.Parameters.fsr_quality_mode
-                )
-
         if (
             program_gamescope is not None
             and program_gamescope != self.config.Parameters.gamescope
@@ -140,8 +133,24 @@ class WineExecutor:
             else:
                 self.environment["WINEDLLOVERRIDES"] = ";".join(env_dll_overrides)
 
+    @staticmethod
+    def is_unreachable_in_sandbox(path: Optional[str]) -> bool:
+        """A document portal path (/run/user/<uid>/doc/<id>/...) lives outside
+        the bottle and is not carried into the dedicated sandbox, so a program
+        stored there cannot be opened while the sandbox is active. Detect it so
+        the frontend can warn before launching."""
+        if not path:
+            return False
+        return "/run/user/" in path and "/doc/" in path
+
     @classmethod
-    def run_program(cls, config: BottleConfig, program: dict, terminal: bool = False):
+    def run_program(
+        cls,
+        config: BottleConfig,
+        program: dict,
+        terminal: bool = False,
+        sandbox_override: Optional[str] = None,
+    ):
         if program is None:
             logging.warning("The program entry is not well formatted.")
 
@@ -150,10 +159,14 @@ class WineExecutor:
         def _resolve(field: str):
             return cls._replace_placeholders((program or {}).get(field), placeholders)
 
+        arguments = _resolve("arguments")
+        if not (program or {}).get("arguments_enabled", True):
+            arguments = ""
+
         return cls(
             config=config,
             exec_path=program.get("path"),
-            args=_resolve("arguments"),
+            args=arguments,
             pre_script=cls._replace_placeholders(
                 program.get("pre_script"), placeholders
             ),
@@ -167,10 +180,10 @@ class WineExecutor:
             program_dxvk=program.get("dxvk"),
             program_vkd3d=program.get("vkd3d"),
             program_nvapi=program.get("dxvk_nvapi"),
-            program_fsr=program.get("fsr"),
             program_gamescope=program.get("gamescope"),
             program_virt_desktop=program.get("virtual_desktop"),
             program_winebridge=program.get("winebridge"),
+            sandbox_override=sandbox_override,
         ).run()
 
     @staticmethod
@@ -313,6 +326,26 @@ class WineExecutor:
             os.path.basename(self._raw_exec_path) if self._raw_exec_path else "unknown"
         )
         program_path = self._raw_exec_path or self.exec_path
+        
+        try:
+            fonts_dir = os.path.join(ManagerUtils.get_bottle_path(self.config), "drive_c", "windows", "Fonts")
+            stamp_file = os.path.join(ManagerUtils.get_bottle_path(self.config), ".fonts_stamp")
+            if os.path.exists(fonts_dir):
+                fonts_mtime = os.path.getmtime(fonts_dir)
+                stamp_mtime = 0.0
+                if os.path.exists(stamp_file):
+                    with open(stamp_file, "r") as f:
+                        stamp_mtime = float(f.read().strip() or 0)
+                
+                if fonts_mtime > stamp_mtime:
+                    logging.info("Fonts directory modified manually, running wineboot to update fonts registry.")
+                    from bottles.backend.wine.wineboot import WineBoot
+                    WineBoot(self.config).launch(update=True)
+                    with open(stamp_file, "w") as f:
+                        f.write(str(fonts_mtime))
+        except Exception as e:
+            logging.debug(f"Failed to check and update fonts: {e}")
+
         try:
             SignalManager.send(
                 Signals.ProgramStarted,
@@ -434,6 +467,7 @@ class WineExecutor:
             pre_script_args=self.pre_script_args,
             post_script_args=self.post_script_args,
             cwd=self.cwd,
+            sandbox_override=self.sandbox_override,
         )
         res = winecmd.run()
         self.__set_monitors()

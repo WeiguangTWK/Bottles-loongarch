@@ -92,9 +92,17 @@ class WineServer(WineProgram):
 
     def force_kill(self):
         bottle = ManagerUtils.get_bottle_path(self.config)
+
+        # Under a dedicated sandbox the processes are not visible on the host,
+        # so kill the tracked sandbox launchers (their process groups) instead.
+        if self.config.Parameters.sandbox:
+            from bottles.backend.managers.sandbox import SandboxManager
+
+            SandboxManager.terminate_prefix(bottle)
+            return
+
         procs = ProcUtils.get_by_env(f"WINEPREFIX={bottle}")
         for proc in procs:
-            proc.kill()
+            proc.kill(9)
 
-        if len(procs) == 0:
-            self.kill(9)
+        self.kill(9)

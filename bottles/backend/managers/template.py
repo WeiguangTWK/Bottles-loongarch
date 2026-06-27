@@ -52,12 +52,16 @@ class TemplateManager:
         delattr(config, "Creation_Date")
         delattr(config, "Update_Date")
 
-        ignored = ["dosdevices", "states", ".fvs", "*.yml.*"]
+        ignored = ["dosdevices", "states", ".fvs", "*.yml", ".*", "*.tmp"]
 
         _path = os.path.join(Paths.templates, _uuid)
         logging.info("Copying files …")
 
-        with contextlib.suppress(FileNotFoundError):
+        # Wine keeps writing and removing transient files (e.g. registry .tmp
+        # files) while the prefix is initialized. If one of them vanishes mid
+        # copy, copytree aggregates the failures into a shutil.Error, so handle
+        # it together with the missing source directory case.
+        with contextlib.suppress(FileNotFoundError, shutil.Error):
             shutil.copytree(
                 bottle, _path, symlinks=True, ignore=shutil.ignore_patterns(*ignored)
             )
@@ -124,7 +128,7 @@ class TemplateManager:
         for template in templates:
             if os.path.exists(os.path.join(Paths.templates, template, "template.yml")):
                 _manifest = TemplateManager.get_template_manifest(template)
-                if _manifest is not None:
+                if _manifest is not None and _manifest["uuid"] == template:
                     res.append(_manifest)
 
         return res

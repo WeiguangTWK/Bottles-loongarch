@@ -78,11 +78,18 @@ class ConnectionUtils:
 
         try:
             c = pycurl.Curl()
+            _proxy = os.environ.get("http_proxy") or os.environ.get("https_proxy")
+            if _proxy:
+                c.setopt(pycurl.PROXY, _proxy)
             c.setopt(c.URL, "https://ping.usebottles.com")
             c.setopt(c.FOLLOWLOCATION, True)
             c.setopt(c.NOBODY, True)
             c.setopt(c.NOPROGRESS, False)
             c.setopt(c.XFERINFOFUNCTION, self.__curl_progress)
+            # bound the check so a stalled/filtered connection cannot hang the
+            # whole startup; on timeout we simply fall back to offline mode
+            c.setopt(pycurl.CONNECTTIMEOUT, 5)
+            c.setopt(pycurl.TIMEOUT, 10)
             c.perform()
 
             if c.getinfo(pycurl.HTTP_CODE) != 200:

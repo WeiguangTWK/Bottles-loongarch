@@ -41,14 +41,13 @@ from bottles.backend.utils.display import DisplayUtils
 from bottles.backend.utils.gpu import GPUUtils, GPUVendors
 from bottles.backend.utils.manager import ManagerUtils
 from bottles.backend.utils.threading import RunAsync
+from bottles.backend.utils.vulkan import VulkanUtils
 from bottles.backend.wine.regkeys import RegKeys
 from bottles.frontend.utils.gtk import GtkUtils
 from bottles.frontend.windows.display import DisplayDialog
 from bottles.frontend.windows.dlloverrides import DLLOverridesDialog
 from bottles.frontend.windows.drives import DrivesDialog
 from bottles.frontend.windows.envvars import EnvironmentVariablesDialog
-from bottles.frontend.windows.exclusionpatterns import ExclusionPatternsDialog
-from bottles.frontend.windows.fsr import FsrDialog
 from bottles.frontend.windows.gamescope import GamescopeDialog
 from bottles.frontend.windows.mangohud import MangoHudDialog
 from bottles.frontend.windows.protonalert import ProtonAlertDialog
@@ -67,10 +66,8 @@ class PreferencesView(Adw.PreferencesPage):
     # region Widgets
     btn_manage_gamescope = Gtk.Template.Child()
     btn_manage_vkbasalt = Gtk.Template.Child()
-    btn_manage_fsr = Gtk.Template.Child()
     btn_manage_mangohud = Gtk.Template.Child()
     btn_manage_sandbox = Gtk.Template.Child()
-    btn_manage_versioning_patterns = Gtk.Template.Child()
     btn_manage_vmtouch = Gtk.Template.Child()
     btn_cwd_reset = Gtk.Template.Child()
     btn_cwd = Gtk.Template.Child()
@@ -99,7 +96,6 @@ class PreferencesView(Adw.PreferencesPage):
     switch_vkbasalt = Gtk.Template.Child()
     switch_wayland = Gtk.Template.Child()
     switch_winebridge = Gtk.Template.Child()
-    switch_fsr = Gtk.Template.Child()
     switch_nvapi = Gtk.Template.Child()
     switch_gamemode = Gtk.Template.Child()
     switch_gamescope = Gtk.Template.Child()
@@ -107,9 +103,6 @@ class PreferencesView(Adw.PreferencesPage):
     switch_runtime = Gtk.Template.Child()
     switch_steam_runtime = Gtk.Template.Child()
     switch_sandbox = Gtk.Template.Child()
-    switch_versioning_compression = Gtk.Template.Child()
-    switch_auto_versioning = Gtk.Template.Child()
-    switch_versioning_patterns = Gtk.Template.Child()
     switch_vmtouch = Gtk.Template.Child()
     combo_runner = Gtk.Template.Child()
     combo_dxvk = Gtk.Template.Child()
@@ -238,7 +231,6 @@ class PreferencesView(Adw.PreferencesPage):
         self.btn_manage_vkbasalt.connect(
             "clicked", self.__show_feature_dialog, VkBasaltDialog
         )
-        self.btn_manage_fsr.connect("clicked", self.__show_feature_dialog, FsrDialog)
         self.btn_manage_mangohud.connect(
             "clicked", self.__show_feature_dialog, MangoHudDialog
         )
@@ -247,9 +239,6 @@ class PreferencesView(Adw.PreferencesPage):
         )
         self.btn_manage_vmtouch.connect(
             "clicked", self.__show_feature_dialog, VmtouchDialog
-        )
-        self.btn_manage_versioning_patterns.connect(
-            "clicked", self.__show_feature_dialog, ExclusionPatternsDialog
         )
         self.btn_cwd.connect("clicked", self.choose_cwd)
         self.btn_cwd_reset.connect("clicked", self.reset_cwd, True)
@@ -260,7 +249,6 @@ class PreferencesView(Adw.PreferencesPage):
         self.switch_winebridge.connect(
             "state-set", self.__toggle_feature_cb, "winebridge"
         )
-        self.switch_fsr.connect("state-set", self.__toggle_feature_cb, "fsr")
         self.switch_nvapi.connect("state-set", self.__toggle_nvapi)
         self.switch_gamemode.connect("state-set", self.__toggle_feature_cb, "gamemode")
         self.switch_gamescope.connect(
@@ -269,15 +257,6 @@ class PreferencesView(Adw.PreferencesPage):
         self.switch_sandbox.connect("state-set", self.__toggle_feature_cb, "sandbox")
         self.switch_discrete.connect(
             "state-set", self.__toggle_feature_cb, "discrete_gpu"
-        )
-        self.switch_versioning_compression.connect(
-            "state-set", self.__toggle_versioning_compression
-        )
-        self.switch_auto_versioning.connect(
-            "state-set", self.__toggle_feature_cb, "versioning_automatic"
-        )
-        self.switch_versioning_patterns.connect(
-            "state-set", self.__toggle_feature_cb, "versioning_exclusion_patterns"
         )
         self.switch_vmtouch.connect("state-set", self.__toggle_feature_cb, "vmtouch")
         self.combo_runner.connect("notify::selected", self.__set_runner)
@@ -313,6 +292,16 @@ class PreferencesView(Adw.PreferencesPage):
         self.btn_manage_mangohud.set_sensitive(mangohud_available)
         self.switch_obsvkc.set_sensitive(obs_vkc_available)
         self.switch_vmtouch.set_sensitive(vmtouch_available)
+
+        if not VulkanUtils.check_support():
+            self.combo_dxvk.set_sensitive(False)
+            self.combo_vkd3d.set_sensitive(False)
+            self.combo_nvapi.set_sensitive(False)
+            self.switch_nvapi.set_sensitive(False)
+            self.combo_latencyflex.set_sensitive(False)
+            self.switch_vkbasalt.set_sensitive(False)
+            self.btn_manage_vkbasalt.set_sensitive(False)
+            self.switch_obsvkc.set_sensitive(False)
 
         is_wayland_session = DisplayUtils.display_server_type() == "wayland"
         self.switch_wayland.set_sensitive(is_wayland_session)
@@ -531,17 +520,11 @@ class PreferencesView(Adw.PreferencesPage):
         self.switch_vkbasalt.handler_block_by_func(self.__toggle_feature_cb)
         self.switch_wayland.handler_block_by_func(self.__toggle_wayland)
         self.switch_winebridge.handler_block_by_func(self.__toggle_feature_cb)
-        self.switch_fsr.handler_block_by_func(self.__toggle_feature_cb)
         self.switch_obsvkc.handler_block_by_func(self.__toggle_feature_cb)
         self.switch_gamemode.handler_block_by_func(self.__toggle_feature_cb)
         self.switch_gamescope.handler_block_by_func(self.__toggle_feature_cb)
         self.switch_sandbox.handler_block_by_func(self.__toggle_feature_cb)
         self.switch_discrete.handler_block_by_func(self.__toggle_feature_cb)
-        self.switch_versioning_compression.handler_block_by_func(
-            self.__toggle_versioning_compression
-        )
-        self.switch_auto_versioning.handler_block_by_func(self.__toggle_feature_cb)
-        self.switch_versioning_patterns.handler_block_by_func(self.__toggle_feature_cb)
         with contextlib.suppress(TypeError):
             self.switch_steam_runtime.handler_block_by_func(self.__toggle_feature_cb)
         self.combo_runner.handler_block_by_func(self.__set_runner)
@@ -556,16 +539,10 @@ class PreferencesView(Adw.PreferencesPage):
         self.switch_vkbasalt.set_active(parameters.vkbasalt)
         self.switch_wayland.set_active(parameters.wayland)
         self.switch_winebridge.set_active(parameters.winebridge)
-        self.switch_fsr.set_active(parameters.fsr)
         self.switch_nvapi.set_active(parameters.dxvk_nvapi)
         self.switch_gamemode.set_active(parameters.gamemode)
         self.switch_gamescope.set_active(parameters.gamescope)
         self.switch_sandbox.set_active(parameters.sandbox)
-        self.switch_versioning_compression.set_active(parameters.versioning_compression)
-        self.switch_auto_versioning.set_active(parameters.versioning_automatic)
-        self.switch_versioning_patterns.set_active(
-            parameters.versioning_exclusion_patterns
-        )
         self.switch_steam_runtime.set_active(parameters.use_steam_runtime)
         self.switch_vmtouch.set_active(parameters.vmtouch)
 
@@ -658,6 +635,7 @@ class PreferencesView(Adw.PreferencesPage):
             "wine",
             "esync",
             "fsync",
+            "ntsync",
         ]
         for sync in sync_types:
             if sync == parameters.sync:
@@ -669,19 +647,11 @@ class PreferencesView(Adw.PreferencesPage):
         self.switch_vkbasalt.handler_unblock_by_func(self.__toggle_feature_cb)
         self.switch_wayland.handler_unblock_by_func(self.__toggle_wayland)
         self.switch_winebridge.handler_unblock_by_func(self.__toggle_feature_cb)
-        self.switch_fsr.handler_unblock_by_func(self.__toggle_feature_cb)
         self.switch_obsvkc.handler_unblock_by_func(self.__toggle_feature_cb)
         self.switch_gamemode.handler_unblock_by_func(self.__toggle_feature_cb)
         self.switch_gamescope.handler_unblock_by_func(self.__toggle_feature_cb)
         self.switch_sandbox.handler_unblock_by_func(self.__toggle_feature_cb)
         self.switch_discrete.handler_unblock_by_func(self.__toggle_feature_cb)
-        self.switch_versioning_compression.handler_unblock_by_func(
-            self.__toggle_versioning_compression
-        )
-        self.switch_auto_versioning.handler_unblock_by_func(self.__toggle_feature_cb)
-        self.switch_versioning_patterns.handler_unblock_by_func(
-            self.__toggle_feature_cb
-        )
         with contextlib.suppress(TypeError):
             self.switch_steam_runtime.handler_unblock_by_func(self.__toggle_feature_cb)
         self.combo_runner.handler_unblock_by_func(self.__set_runner)
@@ -726,12 +696,13 @@ class PreferencesView(Adw.PreferencesPage):
 
     def __set_sync_type(self, *_args):
         """
-        Set the sync type (wine, esync, fsync)
+        Set the sync type (wine, esync, fsync, ntsync)
         """
         sync_types = [
             "wine",
             "esync",
             "fsync",
+            "ntsync",
         ]
         self.queue.add_task()
         self.combo_sync.set_sensitive(False)
@@ -759,38 +730,6 @@ class PreferencesView(Adw.PreferencesPage):
         )
 
         self.__toggle_feature(state=state, key="dxvk_nvapi")
-
-    def __toggle_versioning_compression(self, widget, state):
-        """Toggle the versioning compression for current bottle"""
-
-        def update():
-            self.config = self.manager.update_config(
-                config=self.config,
-                key="versioning_compression",
-                value=state,
-                scope="Parameters",
-            ).data["config"]
-
-        def handle_response(_widget, response_id):
-            if response_id == "ok":
-                RunAsync(
-                    self.manager.versioning_manager.re_initialize, config=self.config
-                )
-            _widget.destroy()
-
-        if self.manager.versioning_manager.is_initialized(self.config):
-            dialog = Adw.MessageDialog.new(
-                self.window,
-                _("Are you sure you want to delete all snapshots?"),
-                _("This will delete all snapshots but keep your files."),
-            )
-            dialog.add_response("cancel", _("_Cancel"))
-            dialog.add_response("ok", _("_Delete"))
-            dialog.set_response_appearance("ok", Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.connect("response", handle_response)
-            dialog.present()
-        else:
-            update()
 
     def __set_runner(self, *_args):
         """Set the runner to use for the bottle"""

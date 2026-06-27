@@ -98,26 +98,6 @@ template $DetailsPreferences: Adw.PreferencesPage {
       }
     }
 
-    Adw.ActionRow {
-      activatable-widget: switch_fsr;
-      title: _("FidelityFX Super Resolution");
-      subtitle: _("Increase performance at the expense of visuals. Only works on Vulkan.");
-
-      Button btn_manage_fsr {
-        tooltip-text: _("Manage FidelityFX Super Resolution settings");
-        valign: center;
-        icon-name: "applications-system-symbolic";
-
-        styles [
-          "flat",
-        ]
-      }
-
-      Switch switch_fsr {
-        valign: center;
-      }
-    }
-
     Adw.ActionRow row_discrete {
       visible: false;
       activatable-widget: switch_discrete;
@@ -210,6 +190,7 @@ template $DetailsPreferences: Adw.PreferencesPage {
           _("System"),
           _("Esync"),
           _("Fsync"),
+          _("NTSync"),
         ]
       };
     }
@@ -422,47 +403,4 @@ template $DetailsPreferences: Adw.PreferencesPage {
     }
   }
 
-  Adw.PreferencesGroup {
-    title: _("Snapshots");
-
-    Adw.ActionRow {
-      activatable-widget: switch_auto_versioning;
-      title: _("Automatic Snapshots");
-      subtitle: _("Automatically create snapshots before installing software or changing settings.");
-
-      Switch switch_auto_versioning {
-        valign: center;
-      }
-    }
-
-    Adw.ActionRow {
-      activatable-widget: switch_versioning_compression;
-      title: _("Compression");
-      subtitle: _("Compress snapshots to reduce space. This will slow down the creation of snapshots.");
-
-      Switch switch_versioning_compression {
-        valign: center;
-      }
-    }
-
-    Adw.ActionRow {
-      activatable-widget: switch_versioning_patterns;
-      title: _("Use Exclusion Patterns");
-      subtitle: _("Exclude paths in snapshots.");
-
-      Button btn_manage_versioning_patterns {
-        tooltip-text: _("Manage Patterns");
-        valign: center;
-        icon-name: "applications-system-symbolic";
-
-        styles [
-          "flat",
-        ]
-      }
-
-      Switch switch_versioning_patterns {
-        valign: center;
-      }
-    }
-  }
 }

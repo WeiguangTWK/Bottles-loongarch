@@ -25,6 +25,7 @@ from gi.repository import Adw, Gio, GLib, Gtk
 from bottles.backend.managers.data import DataManager, UserDataKeys
 from bottles.backend.state import EventManager, Events
 from bottles.backend.utils.generic import sort_by_version
+from bottles.backend.utils.manager import ManagerUtils
 from bottles.backend.utils.threading import RunAsync
 from bottles.frontend.widgets.component import ComponentEntry, ComponentExpander
 
@@ -45,6 +46,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
     row_theme = Gtk.Template.Child()
     switch_theme = Gtk.Template.Child()
     switch_notifications = Gtk.Template.Child()
+    switch_show_funding = Gtk.Template.Child()
     switch_force_offline = Gtk.Template.Child()
     switch_temp = Gtk.Template.Child()
     switch_release_candidate = Gtk.Template.Child()
@@ -52,10 +54,14 @@ class PreferencesWindow(Adw.PreferencesWindow):
     switch_auto_close = Gtk.Template.Child()
     switch_update_date = Gtk.Template.Child()
     switch_playtime_tracking = Gtk.Template.Child()
+    switch_eagle_security = Gtk.Template.Child()
+    switch_eagle_crash = Gtk.Template.Child()
+    row_eagle_security = Gtk.Template.Child()
     switch_steam_programs = Gtk.Template.Child()
     switch_epic_games = Gtk.Template.Child()
     switch_ubisoft_connect = Gtk.Template.Child()
     combo_audio_driver = Gtk.Template.Child()
+    spin_eagle_limit = Gtk.Template.Child()
     list_runners = Gtk.Template.Child()
     list_dlls = Gtk.Template.Child()
     action_prerelease = Gtk.Template.Child()
@@ -132,11 +138,34 @@ class PreferencesWindow(Adw.PreferencesWindow):
             Gio.SettingsBindFlags.DEFAULT,
         )
         self.settings.bind(
+            "show-funding",
+            self.switch_show_funding,
+            "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        self.settings.bind(
             "playtime-enabled",
             self.switch_playtime_tracking,
             "active",
             Gio.SettingsBindFlags.DEFAULT,
         )
+        self.settings.bind(
+            "eagle-security-scan",
+            self.switch_eagle_security,
+            "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        self.settings.bind(
+            "eagle-crash-detection",
+            self.switch_eagle_crash,
+            "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        # warn visually (red row) when threat scanning is turned off
+        self.switch_eagle_security.connect(
+            "notify::active", self.__update_eagle_security_style
+        )
+        self.__update_eagle_security_style()
         self.settings.bind(
             "force-offline",
             self.switch_force_offline,
@@ -189,6 +218,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
             "active",
             Gio.SettingsBindFlags.DEFAULT,
         )
+
+        self.spin_eagle_limit.set_value(self.settings.get_int("eagle-scan-limit"))
+        self.spin_eagle_limit.connect("notify::value", self.__on_eagle_limit_changed)
 
         self.__sync_audio_driver_selection()
         self.combo_audio_driver.connect(
@@ -244,15 +276,35 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 parent.remove(w)
         self.__registry = []
 
-    def ui_update(self):
-        if self.manager.utils_conn.status:
-            EventManager.wait(Events.ComponentsOrganizing)
-            GLib.idle_add(self.empty_list)
-            GLib.idle_add(self.populate_runners_list)
-            GLib.idle_add(self.populate_dlls_list)
-            GLib.idle_add(self.populate_cache_list)
+    def __update_eagle_security_style(self, *_args):
+        if self.switch_eagle_security.get_active():
+            self.row_eagle_security.remove_css_class("error")
+            self.row_eagle_security.set_subtitle(
+                _("Check executables for malware patterns before running them.")
+            )
+        else:
+            self.row_eagle_security.add_css_class("error")
+            self.row_eagle_security.set_subtitle(
+                _("Disabled. Executables will run without being checked for threats.")
+            )
 
-            GLib.idle_add(self.dlls_stack.set_visible_child_name, "dlls_list")
+    def ui_update(self):
+        # Show locally installed runners/DLLs right away so the pages never get
+        # stuck on the loading spinner when the online catalog is slow or
+        # unreachable (the lists are read from disk, no network needed).
+        def render():
+            self.empty_list()
+            self.populate_runners_list()
+            self.populate_dlls_list()
+            self.populate_cache_list()
+            self.dlls_stack.set_visible_child_name("dlls_list")
+
+        GLib.idle_add(render)
+
+        if self.manager.utils_conn.status:
+            # then refresh once the online catalog has been organized
+            EventManager.wait(Events.ComponentsOrganizing)
+            GLib.idle_add(render)
 
     def __toggle_night(self, widget, state):
         if self.settings.get_boolean("dark-theme"):
@@ -266,6 +318,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
     def __toggle_rc(self, widget, state):
         self.ui_update()
 
+    def __on_eagle_limit_changed(self, spin_row, _pspec):
+        self.settings.set_int("eagle-scan-limit", int(spin_row.get_value()))
+
     def __open_steam_proton_doc(self, widget):
         webbrowser.open(
             "https://docs.usebottles.com/flatpak/cant-enable-steam-proton-manager"
@@ -276,7 +331,20 @@ class PreferencesWindow(Adw.PreferencesWindow):
             if response != Gtk.ResponseType.ACCEPT:
                 return
 
-            path = dialog.get_file().get_path()
+            path = ManagerUtils.resolve_portal_path(dialog.get_file().get_path())
+
+            if path and "/run/user/" in path and "/doc/" in path:
+                # a transient document portal path cannot be used as the bottles
+                # directory: it would be lost on restart and break startup
+                self.add_toast(
+                    Adw.Toast.new(
+                        _(
+                            "That location is only available temporarily. Please "
+                            "choose a regular folder."
+                        )
+                    )
+                )
+                return
 
             self.data.set(UserDataKeys.CustomBottlesPath, path)
             self.label_bottles_path.set_label(os.path.basename(path))
