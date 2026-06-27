@@ -141,6 +141,14 @@ class PreferencesView(Adw.PreferencesPage):
         self.queue = details.queue
         self.details = details
 
+        self._combo_runner_handler_id = None
+        self._combo_dxvk_handler_id = None
+        self._combo_vkd3d_handler_id = None
+        self._combo_nvapi_handler_id = None
+        self._combo_latencyflex_handler_id = None
+        self._combo_windows_handler_id = None
+        self._combo_language_handler_id = None
+
         if not gamemode_available:
             return
 
@@ -259,13 +267,13 @@ class PreferencesView(Adw.PreferencesPage):
             "state-set", self.__toggle_feature_cb, "discrete_gpu"
         )
         self.switch_vmtouch.connect("state-set", self.__toggle_feature_cb, "vmtouch")
-        self.combo_runner.connect("notify::selected", self.__set_runner)
-        self.combo_dxvk.connect("notify::selected", self.__set_dxvk)
-        self.combo_vkd3d.connect("notify::selected", self.__set_vkd3d)
-        self.combo_nvapi.connect("notify::selected", self.__set_nvapi)
-        self.combo_latencyflex.connect("notify::selected", self.__set_latencyflex)
-        self.combo_windows.connect("notify::selected", self.__set_windows)
-        self.combo_language.connect("notify::selected-item", self.__set_language)
+        self._combo_runner_handler_id = self.combo_runner.connect("notify::selected", self.__set_runner)
+        self._combo_dxvk_handler_id = self.combo_dxvk.connect("notify::selected", self.__set_dxvk)
+        self._combo_vkd3d_handler_id = self.combo_vkd3d.connect("notify::selected", self.__set_vkd3d)
+        self._combo_nvapi_handler_id = self.combo_nvapi.connect("notify::selected", self.__set_nvapi)
+        self._combo_latencyflex_handler_id = self.combo_latencyflex.connect("notify::selected", self.__set_latencyflex)
+        self._combo_windows_handler_id = self.combo_windows.connect("notify::selected", self.__set_windows)
+        self._combo_language_handler_id = self.combo_language.connect("notify::selected-item", self.__set_language)
         self.combo_sync.connect("notify::selected", self.__set_sync_type)
         self.entry_name.connect("changed", self.__check_entry_name)
         self.entry_name.connect("apply", self.__save_name)
@@ -439,6 +447,16 @@ class PreferencesView(Adw.PreferencesPage):
         self.manager.update_config(config=self.config, key="WorkingDir", value="")
         self.__update_working_directory_row()
 
+    @staticmethod
+    def __block_handler(widget, handler_id):
+        if handler_id:
+            widget.handler_block(handler_id)
+
+    @staticmethod
+    def __unblock_handler(widget, handler_id):
+        if handler_id:
+            widget.handler_unblock(handler_id)
+
     def __update_working_directory_row(self, working_dir=None):
         """Update the working directory."""
 
@@ -462,13 +480,13 @@ class PreferencesView(Adw.PreferencesPage):
         the functions connected to the combo boxes to avoid the
         bottle configuration to be updated during the process.
         """
-        self.combo_runner.handler_block_by_func(self.__set_runner)
-        self.combo_dxvk.handler_block_by_func(self.__set_dxvk)
-        self.combo_vkd3d.handler_block_by_func(self.__set_vkd3d)
-        self.combo_nvapi.handler_block_by_func(self.__set_nvapi)
-        self.combo_latencyflex.handler_block_by_func(self.__set_latencyflex)
-        self.combo_language.handler_block_by_func(self.__set_language)
-        self.combo_windows.handler_block_by_func(self.__set_windows)
+        self.__block_handler(self.combo_runner, self._combo_runner_handler_id)
+        self.__block_handler(self.combo_dxvk, self._combo_dxvk_handler_id)
+        self.__block_handler(self.combo_vkd3d, self._combo_vkd3d_handler_id)
+        self.__block_handler(self.combo_nvapi, self._combo_nvapi_handler_id)
+        self.__block_handler(self.combo_latencyflex, self._combo_latencyflex_handler_id)
+        self.__block_handler(self.combo_language, self._combo_language_handler_id)
+        self.__block_handler(self.combo_windows, self._combo_windows_handler_id)
 
         for string_list in [
             self.str_list_runner,
@@ -502,13 +520,13 @@ class PreferencesView(Adw.PreferencesPage):
         for lang in ManagerUtils.get_languages():
             self.str_list_languages.append(lang)
 
-        self.combo_runner.handler_unblock_by_func(self.__set_runner)
-        self.combo_dxvk.handler_unblock_by_func(self.__set_dxvk)
-        self.combo_vkd3d.handler_unblock_by_func(self.__set_vkd3d)
-        self.combo_nvapi.handler_unblock_by_func(self.__set_nvapi)
-        self.combo_latencyflex.handler_unblock_by_func(self.__set_latencyflex)
-        self.combo_language.handler_unblock_by_func(self.__set_language)
-        self.combo_windows.handler_unblock_by_func(self.__set_windows)
+        self.__unblock_handler(self.combo_runner, self._combo_runner_handler_id)
+        self.__unblock_handler(self.combo_dxvk, self._combo_dxvk_handler_id)
+        self.__unblock_handler(self.combo_vkd3d, self._combo_vkd3d_handler_id)
+        self.__unblock_handler(self.combo_nvapi, self._combo_nvapi_handler_id)
+        self.__unblock_handler(self.combo_latencyflex, self._combo_latencyflex_handler_id)
+        self.__unblock_handler(self.combo_language, self._combo_language_handler_id)
+        self.__unblock_handler(self.combo_windows, self._combo_windows_handler_id)
 
     def set_config(self, config: BottleConfig):
         self.config = config
@@ -527,13 +545,13 @@ class PreferencesView(Adw.PreferencesPage):
         self.switch_discrete.handler_block_by_func(self.__toggle_feature_cb)
         with contextlib.suppress(TypeError):
             self.switch_steam_runtime.handler_block_by_func(self.__toggle_feature_cb)
-        self.combo_runner.handler_block_by_func(self.__set_runner)
-        self.combo_dxvk.handler_block_by_func(self.__set_dxvk)
-        self.combo_vkd3d.handler_block_by_func(self.__set_vkd3d)
-        self.combo_nvapi.handler_block_by_func(self.__set_nvapi)
-        self.combo_latencyflex.handler_block_by_func(self.__set_latencyflex)
-        self.combo_windows.handler_block_by_func(self.__set_windows)
-        self.combo_language.handler_block_by_func(self.__set_language)
+        self.__block_handler(self.combo_runner, self._combo_runner_handler_id)
+        self.__block_handler(self.combo_dxvk, self._combo_dxvk_handler_id)
+        self.__block_handler(self.combo_vkd3d, self._combo_vkd3d_handler_id)
+        self.__block_handler(self.combo_nvapi, self._combo_nvapi_handler_id)
+        self.__block_handler(self.combo_latencyflex, self._combo_latencyflex_handler_id)
+        self.__block_handler(self.combo_windows, self._combo_windows_handler_id)
+        self.__block_handler(self.combo_language, self._combo_language_handler_id)
         self.switch_mangohud.set_active(parameters.mangohud)
         self.switch_obsvkc.set_active(parameters.obsvkc)
         self.switch_vkbasalt.set_active(parameters.vkbasalt)
@@ -654,13 +672,13 @@ class PreferencesView(Adw.PreferencesPage):
         self.switch_discrete.handler_unblock_by_func(self.__toggle_feature_cb)
         with contextlib.suppress(TypeError):
             self.switch_steam_runtime.handler_unblock_by_func(self.__toggle_feature_cb)
-        self.combo_runner.handler_unblock_by_func(self.__set_runner)
-        self.combo_dxvk.handler_unblock_by_func(self.__set_dxvk)
-        self.combo_vkd3d.handler_unblock_by_func(self.__set_vkd3d)
-        self.combo_nvapi.handler_unblock_by_func(self.__set_nvapi)
-        self.combo_latencyflex.handler_unblock_by_func(self.__set_latencyflex)
-        self.combo_windows.handler_unblock_by_func(self.__set_windows)
-        self.combo_language.handler_unblock_by_func(self.__set_language)
+        self.__unblock_handler(self.combo_runner, self._combo_runner_handler_id)
+        self.__unblock_handler(self.combo_dxvk, self._combo_dxvk_handler_id)
+        self.__unblock_handler(self.combo_vkd3d, self._combo_vkd3d_handler_id)
+        self.__unblock_handler(self.combo_nvapi, self._combo_nvapi_handler_id)
+        self.__unblock_handler(self.combo_latencyflex, self._combo_latencyflex_handler_id)
+        self.__unblock_handler(self.combo_windows, self._combo_windows_handler_id)
+        self.__unblock_handler(self.combo_language, self._combo_language_handler_id)
 
         self.__set_steam_rules()
 
@@ -777,8 +795,8 @@ class PreferencesView(Adw.PreferencesPage):
         def run_task(status=True):
             if not status:
                 update(Result(True))
-                self.combo_runner.handler_block_by_func(self.__set_runner)
-                self.combo_runner.handler_unblock_by_func(self.__set_runner)
+                self.__block_handler(self.combo_runner, self._combo_runner_handler_id)
+                self.__unblock_handler(self.combo_runner, self._combo_runner_handler_id)
                 return
 
             self.queue.add_task()
