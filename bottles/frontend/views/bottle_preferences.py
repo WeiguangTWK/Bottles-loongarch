@@ -148,6 +148,18 @@ class PreferencesView(Adw.PreferencesPage):
         self._combo_latencyflex_handler_id = None
         self._combo_windows_handler_id = None
         self._combo_language_handler_id = None
+        self._switch_mangohud_handler_id = None
+        self._switch_obsvkc_handler_id = None
+        self._switch_vkbasalt_handler_id = None
+        self._switch_wayland_handler_id = None
+        self._switch_winebridge_handler_id = None
+        self._switch_nvapi_handler_id = None
+        self._switch_gamemode_handler_id = None
+        self._switch_gamescope_handler_id = None
+        self._switch_sandbox_handler_id = None
+        self._switch_discrete_handler_id = None
+        self._switch_vmtouch_handler_id = None
+        self._switch_steam_runtime_handler_id = None
 
         if not gamemode_available:
             return
@@ -250,23 +262,23 @@ class PreferencesView(Adw.PreferencesPage):
         )
         self.btn_cwd.connect("clicked", self.choose_cwd)
         self.btn_cwd_reset.connect("clicked", self.reset_cwd, True)
-        self.switch_mangohud.connect("state-set", self.__toggle_feature_cb, "mangohud")
-        self.switch_obsvkc.connect("state-set", self.__toggle_feature_cb, "obsvkc")
-        self.switch_vkbasalt.connect("state-set", self.__toggle_feature_cb, "vkbasalt")
-        self.switch_wayland.connect("state-set", self.__toggle_wayland)
-        self.switch_winebridge.connect(
+        self._switch_mangohud_handler_id = self.switch_mangohud.connect("state-set", self.__toggle_feature_cb, "mangohud")
+        self._switch_obsvkc_handler_id = self.switch_obsvkc.connect("state-set", self.__toggle_feature_cb, "obsvkc")
+        self._switch_vkbasalt_handler_id = self.switch_vkbasalt.connect("state-set", self.__toggle_feature_cb, "vkbasalt")
+        self._switch_wayland_handler_id = self.switch_wayland.connect("state-set", self.__toggle_wayland)
+        self._switch_winebridge_handler_id = self.switch_winebridge.connect(
             "state-set", self.__toggle_feature_cb, "winebridge"
         )
-        self.switch_nvapi.connect("state-set", self.__toggle_nvapi)
-        self.switch_gamemode.connect("state-set", self.__toggle_feature_cb, "gamemode")
-        self.switch_gamescope.connect(
+        self._switch_nvapi_handler_id = self.switch_nvapi.connect("state-set", self.__toggle_nvapi)
+        self._switch_gamemode_handler_id = self.switch_gamemode.connect("state-set", self.__toggle_feature_cb, "gamemode")
+        self._switch_gamescope_handler_id = self.switch_gamescope.connect(
             "state-set", self.__toggle_feature_cb, "gamescope"
         )
-        self.switch_sandbox.connect("state-set", self.__toggle_feature_cb, "sandbox")
-        self.switch_discrete.connect(
+        self._switch_sandbox_handler_id = self.switch_sandbox.connect("state-set", self.__toggle_feature_cb, "sandbox")
+        self._switch_discrete_handler_id = self.switch_discrete.connect(
             "state-set", self.__toggle_feature_cb, "discrete_gpu"
         )
-        self.switch_vmtouch.connect("state-set", self.__toggle_feature_cb, "vmtouch")
+        self._switch_vmtouch_handler_id = self.switch_vmtouch.connect("state-set", self.__toggle_feature_cb, "vmtouch")
         self._combo_runner_handler_id = self.combo_runner.connect("notify::selected", self.__set_runner)
         self._combo_dxvk_handler_id = self.combo_dxvk.connect("notify::selected", self.__set_dxvk)
         self._combo_vkd3d_handler_id = self.combo_vkd3d.connect("notify::selected", self.__set_vkd3d)
@@ -286,7 +298,7 @@ class PreferencesView(Adw.PreferencesPage):
 
         if RuntimeManager.get_runtimes("steam"):
             self.row_steam_runtime.set_visible(True)
-            self.switch_steam_runtime.connect(
+            self._switch_steam_runtime_handler_id = self.switch_steam_runtime.connect(
                 "state-set", self.__toggle_feature_cb, "use_steam_runtime"
             )
 
@@ -457,6 +469,34 @@ class PreferencesView(Adw.PreferencesPage):
         if handler_id:
             widget.handler_unblock(handler_id)
 
+    def __block_switch_handlers(self):
+        self.__block_handler(self.switch_mangohud, self._switch_mangohud_handler_id)
+        self.__block_handler(self.switch_nvapi, self._switch_nvapi_handler_id)
+        self.__block_handler(self.switch_vkbasalt, self._switch_vkbasalt_handler_id)
+        self.__block_handler(self.switch_wayland, self._switch_wayland_handler_id)
+        self.__block_handler(self.switch_winebridge, self._switch_winebridge_handler_id)
+        self.__block_handler(self.switch_obsvkc, self._switch_obsvkc_handler_id)
+        self.__block_handler(self.switch_gamemode, self._switch_gamemode_handler_id)
+        self.__block_handler(self.switch_gamescope, self._switch_gamescope_handler_id)
+        self.__block_handler(self.switch_sandbox, self._switch_sandbox_handler_id)
+        self.__block_handler(self.switch_discrete, self._switch_discrete_handler_id)
+        self.__block_handler(self.switch_vmtouch, self._switch_vmtouch_handler_id)
+        self.__block_handler(self.switch_steam_runtime, self._switch_steam_runtime_handler_id)
+
+    def __unblock_switch_handlers(self):
+        self.__unblock_handler(self.switch_mangohud, self._switch_mangohud_handler_id)
+        self.__unblock_handler(self.switch_nvapi, self._switch_nvapi_handler_id)
+        self.__unblock_handler(self.switch_vkbasalt, self._switch_vkbasalt_handler_id)
+        self.__unblock_handler(self.switch_wayland, self._switch_wayland_handler_id)
+        self.__unblock_handler(self.switch_winebridge, self._switch_winebridge_handler_id)
+        self.__unblock_handler(self.switch_obsvkc, self._switch_obsvkc_handler_id)
+        self.__unblock_handler(self.switch_gamemode, self._switch_gamemode_handler_id)
+        self.__unblock_handler(self.switch_gamescope, self._switch_gamescope_handler_id)
+        self.__unblock_handler(self.switch_sandbox, self._switch_sandbox_handler_id)
+        self.__unblock_handler(self.switch_discrete, self._switch_discrete_handler_id)
+        self.__unblock_handler(self.switch_vmtouch, self._switch_vmtouch_handler_id)
+        self.__unblock_handler(self.switch_steam_runtime, self._switch_steam_runtime_handler_id)
+
     def __update_working_directory_row(self, working_dir=None):
         """Update the working directory."""
 
@@ -533,18 +573,7 @@ class PreferencesView(Adw.PreferencesPage):
         parameters = self.config.Parameters
 
         # temporary lock functions connected to the widgets
-        self.switch_mangohud.handler_block_by_func(self.__toggle_feature_cb)
-        self.switch_nvapi.handler_block_by_func(self.__toggle_nvapi)
-        self.switch_vkbasalt.handler_block_by_func(self.__toggle_feature_cb)
-        self.switch_wayland.handler_block_by_func(self.__toggle_wayland)
-        self.switch_winebridge.handler_block_by_func(self.__toggle_feature_cb)
-        self.switch_obsvkc.handler_block_by_func(self.__toggle_feature_cb)
-        self.switch_gamemode.handler_block_by_func(self.__toggle_feature_cb)
-        self.switch_gamescope.handler_block_by_func(self.__toggle_feature_cb)
-        self.switch_sandbox.handler_block_by_func(self.__toggle_feature_cb)
-        self.switch_discrete.handler_block_by_func(self.__toggle_feature_cb)
-        with contextlib.suppress(TypeError):
-            self.switch_steam_runtime.handler_block_by_func(self.__toggle_feature_cb)
+        self.__block_switch_handlers()
         self.__block_handler(self.combo_runner, self._combo_runner_handler_id)
         self.__block_handler(self.combo_dxvk, self._combo_dxvk_handler_id)
         self.__block_handler(self.combo_vkd3d, self._combo_vkd3d_handler_id)
@@ -660,18 +689,7 @@ class PreferencesView(Adw.PreferencesPage):
                 self.combo_sync.set_selected(sync_types.index(sync))
 
         # unlock functions connected to the widgets
-        self.switch_mangohud.handler_unblock_by_func(self.__toggle_feature_cb)
-        self.switch_nvapi.handler_unblock_by_func(self.__toggle_nvapi)
-        self.switch_vkbasalt.handler_unblock_by_func(self.__toggle_feature_cb)
-        self.switch_wayland.handler_unblock_by_func(self.__toggle_wayland)
-        self.switch_winebridge.handler_unblock_by_func(self.__toggle_feature_cb)
-        self.switch_obsvkc.handler_unblock_by_func(self.__toggle_feature_cb)
-        self.switch_gamemode.handler_unblock_by_func(self.__toggle_feature_cb)
-        self.switch_gamescope.handler_unblock_by_func(self.__toggle_feature_cb)
-        self.switch_sandbox.handler_unblock_by_func(self.__toggle_feature_cb)
-        self.switch_discrete.handler_unblock_by_func(self.__toggle_feature_cb)
-        with contextlib.suppress(TypeError):
-            self.switch_steam_runtime.handler_unblock_by_func(self.__toggle_feature_cb)
+        self.__unblock_switch_handlers()
         self.__unblock_handler(self.combo_runner, self._combo_runner_handler_id)
         self.__unblock_handler(self.combo_dxvk, self._combo_dxvk_handler_id)
         self.__unblock_handler(self.combo_vkd3d, self._combo_vkd3d_handler_id)
