@@ -214,6 +214,37 @@ class BottleView(Adw.PreferencesPage):
         dialog = VersioningSettingsDialog(window=self.window, config=self.config)
         dialog.present()
 
+    def run_eagle(self, widget=False):
+        """Open a file chooser and start an Eagle analysis for the selected executable."""
+
+        def on_response(dialog, response):
+            if response != Gtk.ResponseType.ACCEPT:
+                return
+
+            selected = dialog.get_file()
+            if selected is None:
+                return
+
+            executable_path = ManagerUtils.resolve_portal_path(selected.get_path())
+            if not executable_path:
+                return
+
+            self.__change_page(widget, "eagle")
+            self.details.view_eagle.analyze(executable_path)
+
+        dialog = Gtk.FileChooserNative.new(
+            title=_("Select Executable or Installer"),
+            action=Gtk.FileChooserAction.OPEN,
+            parent=self.window,
+            accept_label=_("Analyse"),
+        )
+
+        add_executable_filters(dialog)
+        add_all_filters(dialog)
+        dialog.set_modal(True)
+        dialog.connect("response", on_response)
+        dialog.show()
+
     def __update_fvs2_badge(self, bottle_path):
         def _fetch():
             try:
