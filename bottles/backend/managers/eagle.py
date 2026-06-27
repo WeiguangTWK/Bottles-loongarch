@@ -22,10 +22,16 @@ import datetime
 from glob import glob
 import pefile
 import patoolib
-import yara
 import struct
 import json
 import subprocess
+
+try:
+    import yara
+    _yara_import_error = None
+except Exception as e:
+    yara = None
+    _yara_import_error = e
 
 from bottles.backend.globals import Paths
 from bottles.backend.models.config import BottleConfig
@@ -118,6 +124,8 @@ class EagleManager:
     }
 
     _yara_rules = None
+    _yara_status = "uninitialized"
+    _yara_warning_emitted = False
 
     def __init__(self, config: BottleConfig):
         self.config = config
@@ -128,14 +136,52 @@ class EagleManager:
         """Load YARA rules from the bundled file."""
 
         logging.info("[Eagle] Reloading YARA rules...")
+        cls._yara_warning_emitted = False
+
+        if yara is None:
+            cls._yara_rules = None
+            cls._yara_status = "module-unavailable"
+            logging.warning(f"[Eagle] YARA module unavailable: {_yara_import_error}")
+            return
+
         rules_path = os.path.join(os.path.dirname(__file__), "eagle.yar")
-        if os.path.exists(rules_path):
-            try:
-                cls._yara_rules = yara.compile(filepath=rules_path)
-                logging.info("[Eagle] YARA rules loaded")
-            except Exception as e:
-                logging.warning(f"[Eagle] Failed to load YARA rules: {e}")
-                cls._yara_rules = None
+        if not os.path.exists(rules_path):
+            cls._yara_rules = None
+            cls._yara_status = "rules-missing"
+            logging.warning(f"[Eagle] YARA rules file not found: {rules_path}")
+            return
+
+        try:
+            cls._yara_rules = yara.compile(filepath=rules_path)
+            cls._yara_status = "ready"
+            logging.info("[Eagle] YARA rules loaded")
+        except Exception as e:
+            logging.warning(f"[Eagle] Failed to load YARA rules: {e}")
+            cls._yara_rules = None
+            cls._yara_status = "compile-failed"
+
+    @classmethod
+    def _report_yara_unavailable(cls, send_step: bool = False) -> None:
+        """Log and optionally emit a single user-visible step when YARA is unavailable."""
+        reasons = {
+            "module-unavailable": f"YARA module unavailable: {_yara_import_error}",
+            "rules-missing": "YARA rules file not found",
+            "compile-failed": "YARA rules could not be compiled",
+            "uninitialized": "YARA has not been initialized",
+        }
+
+        reason = reasons.get(cls._yara_status, "YARA is unavailable")
+        logging.warning(f"[Eagle] {reason}; continuing with reduced analysis")
+
+        if send_step and not cls._yara_warning_emitted:
+            SignalManager.send(
+                Signals.EagleStep,
+                Result(
+                    status=True,
+                    data="YARA unavailable on this platform/environment; continuing with reduced analysis",
+                ),
+            )
+            cls._yara_warning_emitted = True
 
     def _is_safe_neighbor_dir(self, directory: str) -> bool:
         """Check if directory is safe for neighbor scanning (not a common clutter folder)."""
@@ -182,6 +228,7 @@ class EagleManager:
     def _scan_yara(self, file_path: str, insights: dict, source: str = "Main Executable") -> list:
         """Run YARA scan on a file and update insights."""
         if self._yara_rules is None:
+            self._report_yara_unavailable()
             return []
 
         matches = []
@@ -269,6 +316,8 @@ class EagleManager:
         rule/name/description/severity, empty if nothing matched.
         """
         if self._yara_rules is None or not os.path.isfile(file_path):
+            if self._yara_rules is None:
+                self._report_yara_unavailable()
             return []
 
         findings = []
@@ -409,6 +458,8 @@ class EagleManager:
     def analyze(self, executable_path: str) -> None:
         """Perform comprehensive PE analysis with YARA pattern matching."""
         self._send_step("Initialising Eagle...")
+        if self._yara_rules is None:
+            self._report_yara_unavailable(send_step=True)
         basename = os.path.basename(executable_path)
         exe_dir = os.path.dirname(executable_path)
         self._send_step(f"Target: {basename}")
